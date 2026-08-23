@@ -1,7 +1,17 @@
 # Benchmarks
 
-Empty for now. This directory will hold direct measurements of performance for the
-formats and operations in `src/`.
+Direct measurements of performance for the formats and operations in `src/`.
+
+- `benchmarks.jl` defines `SUITE`, a `BenchmarkTools.BenchmarkGroup` with one
+  group per operation, keyed by representation, format, element type, and
+  problem size.
+- `runbenchmarks.jl` is the entry point: `julia benchmarks/runbenchmarks.jl`
+  activates this environment, develops the package, and runs the suite.
+
+CI runs the suite informationally on pull requests and on a weekly schedule
+(`.github/workflows/Benchmarks.yml`); timing results never block a merge, but
+regressions are reviewed at PR time and the roadmap performance goals are
+enforced before tagging a release.
 
 The goals these benchmarks exist to verify:
 

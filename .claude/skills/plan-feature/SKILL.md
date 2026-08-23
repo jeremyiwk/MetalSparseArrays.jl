@@ -1,6 +1,6 @@
 ---
 name: plan-feature
-description: Plan, specify, implement, and integrate one MetalSparseArrays feature (a storage format, an array interface method, a sparse BLAS kernel, a preconditioner, or solver compatibility). Use when starting new sparse array work, when the user asks to add or plan an operation or format, or when picking up the next item from docs/roadmap.md.
+description: Plan, specify, implement, and integrate one MetalSparseArrays feature (a storage format, an array interface method, a sparse BLAS kernel, a preconditioner, or solver compatibility). Use when starting new sparse array work, when the user asks to add or plan an operation or format, or when picking up the next item from docs/src/roadmap.md.
 ---
 
 # Planning a feature
@@ -16,7 +16,7 @@ roadmap.
 
 ## 1. Scope the feature
 
-Read `.plan/current.md` and `docs/roadmap.md`. Confirm which feature is next and
+Read `.plan/current.md` and `docs/src/roadmap.md`. Confirm which feature is next and
 what it depends on. If a dependency is missing, that dependency is the feature.
 
 State in one sentence what the feature computes or stores, and name the
@@ -133,5 +133,5 @@ A feature is not done until all of the following hold:
   over `SPARSE_TYPES`, `ELEMENT_TYPES`, and `INDEX_TYPES`, and is guarded by
   `DEVICE_AVAILABLE` where it needs a GPU.
 - `Pkg.test()` passes, on a machine with a device and on one without.
-- `docs/roadmap.md` reflects the new state.
+- `docs/src/roadmap.md` reflects the new state.
 - `.plan/current.md` is updated: criteria checked off, and the next feature named.

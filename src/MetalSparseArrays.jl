@@ -14,10 +14,10 @@ below.
 """
 module MetalSparseArrays
 
-using Adapt
-using LinearAlgebra
-using Metal
-using SparseArrays
+using Adapt: Adapt
+using LinearAlgebra: LinearAlgebra
+using Metal: Metal
+using SparseArrays: SparseArrays, AbstractSparseArray
 
 include("common.jl")
 

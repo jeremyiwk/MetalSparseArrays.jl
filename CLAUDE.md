@@ -27,7 +27,11 @@ coverage that is not.
   and the test problem generators `testsparse` and `laplacian_2d`.
   Device test sets are guarded by `DEVICE_AVAILABLE` so the suite still runs without
   a GPU.
-- `docs/roadmap.md` — the coarse phase ordering of the work.
+- `docs/src/roadmap.md` — the coarse phase ordering of the work and the standing
+  performance goals. `docs/` is a Documenter.jl project (`make.jl`, `src/`)
+  deployed by CI.
+- `benchmarks/` — the BenchmarkTools suite (`benchmarks.jl` defines `SUITE`,
+  `runbenchmarks.jl` runs it).
 - `.plan/current.md` — gitignored working memory for the feature in progress.
 - `.claude/skills/plan-feature/` — the workflow for adding a feature.
 
@@ -44,22 +48,31 @@ Run the tests with:
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-## CI and merge standards
+## Development cycle standards
 
-CI (`.github/workflows/CI.yml`) runs on every push to `main` and every pull
-request, and all three jobs must pass before merging into `main`:
+Two different questions are answered at two different times, and they are not
+conflated: pull request CI answers "is this change safe to merge"; release-time
+checks answer "is this state good enough to publish."
 
-1. **Tests** — `Pkg.test()` on the oldest supported Julia (see `[compat]`) and the
-   latest stable release, on macOS runners (the package depends on `Metal.jl`).
-   Device test sets run only where `DEVICE_AVAILABLE` finds a Metal device; the
-   guarded CPU-side suite must pass regardless.
-2. **Aqua QA** — `Aqua.test_all(MetalSparseArrays)`: method ambiguities, unbound
-   type parameters, undefined exports, stale dependencies, missing compat bounds,
-   type piracy. Reproduce locally with:
+### Pull request gates (blocking — main stays green by construction)
+
+All of these run in CI on every PR and must pass before merging into `main`:
+
+1. **Tests** — `Pkg.test()` on the oldest supported Julia (see `[compat]`) and
+   the latest stable release, on macOS runners (the package depends on
+   `Metal.jl`). Device test sets run only where `DEVICE_AVAILABLE` finds a Metal
+   device; the guarded CPU-side suite must pass regardless. Coverage is uploaded
+   to Codecov; a change that lowers coverage needs a reason.
+2. **QA** — `Aqua.test_all(MetalSparseArrays)` (method ambiguities, unbound type
+   parameters, undefined exports, stale dependencies, missing compat bounds,
+   type piracy) plus ExplicitImports (`check_no_implicit_imports`,
+   `check_no_stale_explicit_imports` — every `using` names what it imports).
+   Reproduce locally with:
 
    ```
-   julia -e 'using Pkg; Pkg.activate(temp = true); Pkg.develop(path = "."); Pkg.add("Aqua");
-             using Aqua, MetalSparseArrays; Aqua.test_all(MetalSparseArrays)'
+   julia -e 'using Pkg; Pkg.activate(temp = true); Pkg.develop(path = "."); Pkg.add(["Aqua", "ExplicitImports"]);
+             using Aqua, ExplicitImports, MetalSparseArrays; Aqua.test_all(MetalSparseArrays);
+             check_no_implicit_imports(MetalSparseArrays); check_no_stale_explicit_imports(MetalSparseArrays)'
    ```
 
 3. **Formatting** — all Julia source must be formatted with
@@ -67,9 +80,32 @@ request, and all three jobs must pass before merging into `main`:
    environment (`julia -e 'using Pkg; Pkg.activate("runic", shared = true); Pkg.add("Runic")'`),
    then check with `julia --project=@runic -m Runic --check --diff .` and fix with
    `julia --project=@runic -m Runic --inplace .`.
+4. **Docs build** — `julia --project=docs docs/make.jl` must build without
+   errors (Documenter is strict: broken doctests, broken cross-references, and
+   docstrings missing from the pages all fail the build). Every exported name
+   has a docstring that appears in `docs/src/api.md`.
 
-Run all three locally before pushing; do not merge with a red check. New compat
-entries must be bounded (Aqua enforces this).
+### Benchmarks (informational at PR time, enforced at release time)
+
+The benchmark suite in `benchmarks/` runs on PRs and weekly
+(`.github/workflows/Benchmarks.yml`). Timing on shared runners is noisy, so the
+job never blocks a merge — but a regression flagged at PR time is reviewed by a
+human before merging, and the roadmap performance goals (device sparse beats CPU
+sparse beyond a measured crossover size, and beats device dense from a modest
+size) are verified on real hardware before any release. A new operation lands
+with benchmark entries in `SUITE`, keyed by representation, format, element
+type, and size.
+
+### Publishing (not gating)
+
+- Pushes to `main` deploy the `/dev` docs; tags deploy versioned docs. Nothing
+  is decided at these stages that PR CI did not already decide.
+- **Releasing a version:** update `CHANGELOG.md`, bump `version` in
+  `Project.toml` following SemVer (any export removed or changed is a breaking
+  bump), verify the benchmark goals above, then register (Registrator) —
+  TagBot tags and triggers the versioned docs deploy. CompatHelper runs on a
+  schedule and keeps `[compat]` current; new dependencies always get a bounded
+  compat entry (Aqua enforces this).
 
 ## Development best practices
 

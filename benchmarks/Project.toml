@@ -1,0 +1,6 @@
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+MetalSparseArrays = "564683f1-68c4-4e2f-8eba-ac008ca9a2d9"
+
+[compat]
+BenchmarkTools = "1"

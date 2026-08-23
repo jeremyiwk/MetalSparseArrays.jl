@@ -5,3 +5,6 @@
 .DS_Store
 .plan/
 Manifest.toml
+
+# Documenter build output
+docs/build/

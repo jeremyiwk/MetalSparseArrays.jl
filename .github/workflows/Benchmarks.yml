@@ -1,0 +1,32 @@
+name: Benchmarks
+
+on:
+  # Informational on pull requests: results appear in the job log for a human
+  # to judge; timing noise on shared runners means this job never blocks a merge.
+  pull_request:
+  # The weekly run is where the roadmap performance goals are checked in an
+  # environment with a Metal device.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    name: Run benchmark suite
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - name: Run benchmarks
+        run: julia --color=yes benchmarks/runbenchmarks.jl
