@@ -8,6 +8,8 @@
 
 Sparse arrays for the Apple Silicon GPU backend. Code written against `SparseArrays` on the CPU, or against `CUDA.CUSPARSE` on NVIDIA hardware, should run unchanged on Metal — same storage formats, same function names, same semantics — including the operator interface that iterative solvers such as `Krylov.jl` require.
 
+Documentation: [jeremyiwk.github.io/MetalSparseArrays.jl/dev](https://jeremyiwk.github.io/MetalSparseArrays.jl/dev/)
+
 Supported Julia versions: 1.10 (current LTS) and later. Device operations require Apple Silicon; the test suite runs anywhere.
 
 Contributions follow the [ColPrac](https://github.com/SciML/ColPrac) contributor guide.
