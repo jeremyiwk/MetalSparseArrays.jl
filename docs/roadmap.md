@@ -58,3 +58,15 @@ with the sparse triangular solve they depend on, matching the interface of
 
 Benchmarks against `SparseArrays` on the CPU and against the documented behavior of
 `CUDA.CUSPARSE`, guidance on format selection, documentation, and registration.
+
+## Performance goals
+
+Benchmarks live in `benchmarks/` and are direct measurements of performance, not
+proxies. Two standing targets:
+
+1. Device sparse operations run faster than the same operations on `SparseArrays`
+   on the CPU once the problem size is large enough, with the crossover size
+   measured and reported per operation, format, and element type.
+2. Device sparse operations beat dense `MtlArray` operations on the same problem
+   starting at a fairly modest size — sparsity must pay for itself well before
+   problems become huge, or the format or kernel needs rework.

@@ -2,7 +2,7 @@
     @testset "indextype" begin
         @test MetalSparseArrays.indextype(testsparse(Float32, Int32, 4, 4)) === Int32
         @test MetalSparseArrays.indextype(testsparse(Float32, Int, 4, 4)) === Int
-        @test MetalSparseArrays.indextype(SparseMatrixCSC{Float32,Int32}) === Int32
+        @test MetalSparseArrays.indextype(SparseMatrixCSC{Float32, Int32}) === Int32
     end
 
     @testset "realtype and unit_roundoff" begin
@@ -46,8 +46,12 @@ end
         @test all(<=(one(MetalSparseArrays.realtype(Tv))), abs.(real.(entries)))
         @test all(<=(one(MetalSparseArrays.realtype(Tv))), abs.(imag.(entries)))
         @test A == testsparse(Tv, Int32, 20, 12; density = 0.25)
-        @test rowvals(A) == rowvals(testsparse(referencetype(Tv), Int32, 20, 12;
-                                               density = 0.25))
+        @test rowvals(A) == rowvals(
+            testsparse(
+                referencetype(Tv), Int32, 20, 12;
+                density = 0.25
+            )
+        )
 
         n = 8
         L = laplacian_2d(Tv, n)

@@ -25,9 +25,11 @@ Every element type the suite knows how to build a test problem for. Which of the
 given backend actually supports is decided at run time by `supported_element_types`;
 supporting a new element type means adding it to this tuple and nothing else.
 """
-const CANDIDATE_ELEMENT_TYPES = (Float16, Float32, Float64, BFloat16,
-                                 ComplexF16, ComplexF32, ComplexF64,
-                                 Complex{BFloat16})
+const CANDIDATE_ELEMENT_TYPES = (
+    Float16, Float32, Float64, BFloat16,
+    ComplexF16, ComplexF32, ComplexF64,
+    Complex{BFloat16},
+)
 
 """
     supported_element_types(ArrayType)
@@ -58,7 +60,7 @@ Every test set loops over this list, so an element type is covered by the whole
 suite as soon as the backend accepts it.
 """
 const ELEMENT_TYPES = DEVICE_AVAILABLE ? supported_element_types(MtlArray) :
-                      collect(CANDIDATE_ELEMENT_TYPES)
+    collect(CANDIDATE_ELEMENT_TYPES)
 
 """
     INDEX_TYPES
@@ -93,11 +95,11 @@ referencetype(::Type{<:Complex}) = ComplexF64
 An array of independent entries uniform on `[-1, 1]` for real `T`, and with real and
 imaginary parts independent and uniform on `[-1, 1]` for complex `T`.
 """
-function uniform(rng::AbstractRNG, ::Type{R}, dims::Integer...) where {R<:Real}
+function uniform(rng::AbstractRNG, ::Type{R}, dims::Integer...) where {R <: Real}
     return 2 .* rand(rng, R, dims...) .- one(R)
 end
 
-function uniform(rng::AbstractRNG, ::Type{Complex{R}}, dims::Integer...) where {R<:Real}
+function uniform(rng::AbstractRNG, ::Type{Complex{R}}, dims::Integer...) where {R <: Real}
     return complex.(uniform(rng, R, dims...), uniform(rng, R, dims...))
 end
 
@@ -111,12 +113,14 @@ the values are generated in double precision and then rounded to `Tv`, so the sa
 directly comparable. Used as the CPU reference that device results are validated
 against.
 """
-function testsparse(::Type{Tv}, ::Type{Ti}, m::Integer, n::Integer;
-                    density = 0.1, seed = 0) where {Tv,Ti}
+function testsparse(
+        ::Type{Tv}, ::Type{Ti}, m::Integer, n::Integer;
+        density = 0.1, seed = 0
+    ) where {Tv, Ti}
     rng = MersenneTwister(seed)
     A = sprand(rng, referencetype(Tv), m, n, density)
     nonzeros(A) .= uniform(rng, referencetype(Tv), nnz(A))
-    return SparseMatrixCSC{Tv,Ti}(A)
+    return SparseMatrixCSC{Tv, Ti}(A)
 end
 
 """
@@ -128,9 +132,11 @@ conditions. Symmetric positive definite with condition number growing like `n^2`
 the standard test problem for conjugate gradient and for preconditioners.
 """
 function laplacian_2d(::Type{Tv}, n::Integer) where {Tv}
-    tridiagonal = spdiagm(-1 => fill(-one(Tv), n - 1),
-                           0 => fill(Tv(2), n),
-                           1 => fill(-one(Tv), n - 1))
+    tridiagonal = spdiagm(
+        -1 => fill(-one(Tv), n - 1),
+        0 => fill(Tv(2), n),
+        1 => fill(-one(Tv), n - 1)
+    )
     identity_n = sparse(one(Tv) * I, n, n)
     return kron(identity_n, tridiagonal) + kron(tridiagonal, identity_n)
 end
