@@ -1,8 +1,8 @@
 # MetalSparseArrays.jl
 
-[![CI](https://github.com/jeremyiwk/MetalSparseArrays.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/jeremyiwk/MetalSparseArrays.jl/actions/workflows/CI.yml)
+[![CI](https://github.com/jeremyiwk/MetalSparseArrays.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/jeremyiwk/MetalSparseArrays.jl/actions/workflows/CI.yml)
 [![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://jeremyiwk.github.io/MetalSparseArrays.jl/dev/)
-[![codecov](https://codecov.io/gh/jeremyiwk/MetalSparseArrays.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/jeremyiwk/MetalSparseArrays.jl)
+[![codecov](https://codecov.io/gh/jeremyiwk/MetalSparseArrays.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/jeremyiwk/MetalSparseArrays.jl)
 [![Aqua](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![ColPrac: Contributor's Guide](https://img.shields.io/badge/ColPrac-Contributor%27s%20Guide-blueviolet)](https://github.com/SciML/ColPrac)
 

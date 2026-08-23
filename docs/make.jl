@@ -6,7 +6,7 @@ makedocs(
     modules = [MetalSparseArrays],
     format = Documenter.HTML(
         canonical = "https://jeremyiwk.github.io/MetalSparseArrays.jl",
-        edit_link = "main",
+        edit_link = "master",
     ),
     pages = [
         "Home" => "index.md",
@@ -17,6 +17,6 @@ makedocs(
 
 deploydocs(
     repo = "github.com/jeremyiwk/MetalSparseArrays.jl.git",
-    devbranch = "main",
+    devbranch = "master",
     push_preview = false,
 )
