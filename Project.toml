@@ -1,0 +1,28 @@
+name = "MetalSparseArrays"
+uuid = "564683f1-68c4-4e2f-8eba-ac008ca9a2d9"
+authors = ["Jeremy Welsh-Kavan"]
+version = "0.1.0-DEV"
+
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+
+[compat]
+Adapt = "4"
+Krylov = "0.10"
+LinearAlgebra = "1"
+Metal = "1"
+Random = "1"
+SparseArrays = "1"
+Test = "1"
+julia = "1.10"
+
+[extras]
+Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test", "Random", "Krylov"]
