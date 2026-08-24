@@ -96,7 +96,7 @@ unverified on Metal. Element types are discovered by probing the device.
 - `Base.show` displays every format legibly at the REPL without scalar indexing
   (summary line plus a bounded number of entries fetched in one transfer).
 
-## Phase 2 — Array interface
+## Phase 2 — Array interface *(in progress: similar/copy/collect, rowvals/findnz, scalar indexing policy shipped)*
 
 **Deliverables**
 

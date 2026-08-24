@@ -7,4 +7,5 @@ include("testsuite.jl")
     include("test_coo.jl")
     include("test_conversions.jl")
     include("test_dense.jl")
+    include("test_interface.jl")
 end

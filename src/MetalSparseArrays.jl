@@ -28,5 +28,6 @@ include("csr.jl")
 include("csc.jl")
 include("coo.jl")
 include("conversions.jl")
+include("interface.jl")
 
 end # module
