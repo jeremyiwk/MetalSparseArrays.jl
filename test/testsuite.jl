@@ -91,7 +91,27 @@ const INDEX_TYPES = (Int32,)
 Device sparse matrix types the suite runs against. Each format is appended here as
 it is implemented, and every format-independent test set loops over this list.
 """
-const SPARSE_TYPES = Any[]
+const SPARSE_TYPES = Any[MtlSparseMatrixCSR]
+
+# Cross-cutting requirement: library code never scalar indexes a device array.
+# Any code path that tries fails the suite instead of silently round tripping
+# through the host.
+DEVICE_AVAILABLE && Metal.allowscalar(false)
+
+"""
+    exact_equal(A, B)
+
+Structural and value equality of two `SparseMatrixCSC`s: equal dimensions and
+elementwise equal `colptr`, `rowval`, and `nzval` (compared with `isequal`, so
+stored `NaN`s compare equal and stored zeros are distinguished from structural
+zeros). This is the round-trip criterion for host-device-host conversion, which
+is exact, not approximate; index arrays may differ in integer type but not in
+value.
+"""
+function exact_equal(A::SparseMatrixCSC, B::SparseMatrixCSC)
+    return size(A) == size(B) && A.colptr == B.colptr && A.rowval == B.rowval &&
+        isequal(A.nzval, B.nzval)
+end
 
 """
     referencetype(T)

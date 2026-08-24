@@ -16,9 +16,13 @@ module MetalSparseArrays
 
 using Adapt: Adapt
 using LinearAlgebra: LinearAlgebra
-using Metal: Metal
-using SparseArrays: SparseArrays, AbstractSparseArray
+using Metal: Metal, MtlVector
+using SparseArrays: SparseArrays, AbstractSparseArray, AbstractSparseMatrix,
+    SparseMatrixCSC, nnz, sparse
+
+export AbstractMtlSparseMatrix, MtlSparseMatrixCSR
 
 include("common.jl")
+include("csr.jl")
 
 end # module
