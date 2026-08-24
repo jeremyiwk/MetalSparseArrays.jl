@@ -8,4 +8,5 @@ include("testsuite.jl")
     include("test_conversions.jl")
     include("test_dense.jl")
     include("test_interface.jl")
+    include("test_broadcast.jl")
 end
