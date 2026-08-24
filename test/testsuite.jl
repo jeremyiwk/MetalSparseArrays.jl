@@ -91,7 +91,7 @@ const INDEX_TYPES = (Int32,)
 Device sparse matrix types the suite runs against. Each format is appended here as
 it is implemented, and every format-independent test set loops over this list.
 """
-const SPARSE_TYPES = Any[MtlSparseMatrixCSR]
+const SPARSE_TYPES = Any[MtlSparseMatrixCSC, MtlSparseMatrixCSR]
 
 # Cross-cutting requirement: library code never scalar indexes a device array.
 # Any code path that tries fails the suite instead of silently round tripping
@@ -111,6 +111,36 @@ value.
 function exact_equal(A::SparseMatrixCSC, B::SparseMatrixCSC)
     return size(A) == size(B) && A.colptr == B.colptr && A.rowval == B.rowval &&
         isequal(A.nzval, B.nzval)
+end
+
+"""
+    pattern_corpus(Tv)
+
+The corpus of host matrices format round-trip tests run over: random patterns
+over several seeds and densities, the shape edge cases, a dense row and a dense
+column, explicit stored zeros, and (for float types) stored nonfinite values.
+"""
+function pattern_corpus(::Type{Tv}) where {Tv}
+    patterns = SparseMatrixCSC{Tv, Int}[]
+    for seed in 0:3, density in (0.05, 0.3)
+        push!(patterns, testsparse(Tv, Int, 23, 31; density, seed))
+    end
+    push!(patterns, spzeros(Tv, 0, 0))
+    push!(patterns, spzeros(Tv, 0, 5))
+    push!(patterns, spzeros(Tv, 5, 0))
+    push!(patterns, spzeros(Tv, 6, 9))
+    push!(patterns, sparse([1], [1], [Tv(3)], 1, 1))
+    push!(patterns, sparse([4], [2], [Tv(-1)], 9, 7))
+    push!(patterns, sparse(fill(3, 10), collect(1:10), fill(Tv(2), 10), 10, 10))
+    push!(patterns, sparse(collect(1:10), fill(4, 10), fill(Tv(2), 10), 10, 10))
+    push!(patterns, testsparse(Tv, Int, 200, 3; density = 0.2, seed = 4))
+    push!(patterns, testsparse(Tv, Int, 3, 200; density = 0.2, seed = 5))
+    # Explicit stored zero: sparse(I, J, V) keeps numerical zeros it is given.
+    push!(patterns, sparse([1, 2, 5], [1, 1, 3], [zero(Tv), one(Tv), zero(Tv)], 5, 5))
+    if Tv <: Union{AbstractFloat, Complex}
+        push!(patterns, sparse([1, 3], [2, 2], [Tv(NaN), Tv(Inf)], 4, 4))
+    end
+    return patterns
 end
 
 """

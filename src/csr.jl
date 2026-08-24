@@ -35,7 +35,8 @@ struct MtlSparseMatrixCSR{Tv, Ti <: Integer} <: AbstractMtlSparseMatrix{Tv, Ti}
             m::Integer, n::Integer, rowptr::MtlVector{Ti},
             colval::MtlVector{Ti}, nzval::MtlVector{Tv}
         ) where {Tv, Ti <: Integer}
-        csr_check(m, n, rowptr, colval, nzval)
+        dims_check(m, n, Ti)
+        compressed_check(m, n, rowptr, colval, nzval, "rowptr", "colval")
         return new{Tv, Ti}(m, n, rowptr, colval, nzval)
     end
 end
@@ -45,42 +46,6 @@ function MtlSparseMatrixCSR(
         colval::MtlVector{Ti}, nzval::MtlVector{Tv}
     ) where {Tv, Ti <: Integer}
     return MtlSparseMatrixCSR{Tv, Ti}(m, n, rowptr, colval, nzval)
-end
-
-# The pointer invariants are checked on a host copy of `rowptr` (an O(m)
-# transfer, accepted at construction time); the column index range is checked by
-# a device reduction, so `colval` is never transferred.
-function csr_check(
-        m::Integer, n::Integer, rowptr::MtlVector{Ti},
-        colval::MtlVector{Ti}, nzval::MtlVector
-    ) where {Ti <: Integer}
-    0 <= m <= typemax(Ti) ||
-        throw(ArgumentError("number of rows m = $m is negative or does not fit in Ti = $Ti"))
-    0 <= n <= typemax(Ti) ||
-        throw(ArgumentError("number of columns n = $n is negative or does not fit in Ti = $Ti"))
-    length(rowptr) == m + 1 ||
-        throw(ArgumentError("$(length(rowptr)) == length(rowptr) != m + 1 == $(m + 1)"))
-    hostptr = Array(rowptr)
-    hostptr[1] == 1 || throw(ArgumentError("$(hostptr[1]) == rowptr[1] != 1"))
-    for i in 2:(m + 1)
-        hostptr[i - 1] <= hostptr[i] ||
-            throw(
-            ArgumentError(
-                "$(hostptr[i - 1]) == rowptr[$(i - 1)] > rowptr[$i] == $(hostptr[i])"
-            )
-        )
-    end
-    stored = Int(hostptr[m + 1]) - 1
-    length(colval) == stored ||
-        throw(ArgumentError("$(length(colval)) == length(colval) != rowptr[m + 1] - 1 == $stored"))
-    length(nzval) == stored ||
-        throw(ArgumentError("$(length(nzval)) == length(nzval) != rowptr[m + 1] - 1 == $stored"))
-    if !isempty(colval)
-        nTi = Ti(n)
-        inrange = mapreduce(j -> (one(Ti) <= j) & (j <= nTi), &, colval)
-        inrange || throw(ArgumentError("colval contains a column index outside 1:$n"))
-    end
-    return nothing
 end
 
 function MtlSparseMatrixCSR{Tv, Ti}(A::SparseMatrixCSC) where {Tv, Ti <: Integer}
@@ -114,28 +79,3 @@ function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, 
     At = SparseMatrixCSC(A.n, A.m, Array(A.rowptr), Array(A.colval), Array(A.nzval))
     return sparse(transpose(At))
 end
-
-Adapt.adapt_storage(::Type{Array}, A::MtlSparseMatrixCSR) = SparseMatrixCSC(A)
-
-Base.size(A::MtlSparseMatrixCSR) = (A.m, A.n)
-
-SparseArrays.nnz(A::MtlSparseMatrixCSR) = length(A.nzval)
-
-"""
-    nonzeros(A::MtlSparseMatrixCSR)
-
-The `MtlVector` of stored values of `A`, in storage (row-major) order, aliasing
-the matrix. Stored entries may hold the value zero.
-"""
-SparseArrays.nonzeros(A::MtlSparseMatrixCSR) = A.nzval
-
-function Base.summary(io::IO, A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
-    k = nnz(A)
-    return print(
-        io, A.m, "×", A.n, " MtlSparseMatrixCSR{", Tv, ", ", Ti, "} with ",
-        k, " stored ", k == 1 ? "entry" : "entries"
-    )
-end
-
-Base.show(io::IO, ::MIME"text/plain", A::MtlSparseMatrixCSR) = summary(io, A)
-Base.show(io::IO, A::MtlSparseMatrixCSR) = summary(io, A)

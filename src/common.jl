@@ -9,6 +9,87 @@ value zero.
 """
 abstract type AbstractMtlSparseMatrix{Tv, Ti <: Integer} <: AbstractSparseMatrix{Tv, Ti} end
 
+# Field convention for AbstractMtlSparseMatrix subtypes, which the generic
+# methods below rely on: every format stores its dimensions as `m::Int` and
+# `n::Int` and its values as `nzval::MtlVector{Tv}`.
+
+Base.size(A::AbstractMtlSparseMatrix) = (A.m, A.n)
+
+SparseArrays.nnz(A::AbstractMtlSparseMatrix) = length(A.nzval)
+
+"""
+    nonzeros(A::AbstractMtlSparseMatrix)
+
+The `MtlVector` of stored values of `A`, in the storage order of the format
+(row-major for CSR, column-major for CSC), aliasing the matrix. Stored entries
+may hold the value zero.
+"""
+SparseArrays.nonzeros(A::AbstractMtlSparseMatrix) = A.nzval
+
+function Base.summary(io::IO, A::AbstractMtlSparseMatrix{Tv, Ti}) where {Tv, Ti}
+    k = nnz(A)
+    return print(
+        io, A.m, "×", A.n, " ", nameof(typeof(A)), "{", Tv, ", ", Ti, "} with ",
+        k, " stored ", k == 1 ? "entry" : "entries"
+    )
+end
+
+Base.show(io::IO, ::MIME"text/plain", A::AbstractMtlSparseMatrix) = summary(io, A)
+Base.show(io::IO, A::AbstractMtlSparseMatrix) = summary(io, A)
+
+Adapt.adapt_storage(::Type{Array}, A::AbstractMtlSparseMatrix) = SparseMatrixCSC(A)
+
+function dims_check(m::Integer, n::Integer, ::Type{Ti}) where {Ti <: Integer}
+    0 <= m <= typemax(Ti) ||
+        throw(ArgumentError("number of rows m = $m is negative or does not fit in Ti = $Ti"))
+    0 <= n <= typemax(Ti) ||
+        throw(ArgumentError("number of columns n = $n is negative or does not fit in Ti = $Ti"))
+    return nothing
+end
+
+"""
+    compressed_check(major, minor, ptr, idx, nzval, ptrname, idxname)
+
+Validate the compressed-storage invariants shared by the CSR (`major == m`) and
+CSC (`major == n`) formats: `ptr` has length `major + 1`, starts at one, and is
+monotonically nondecreasing; `idx` and `nzval` have exactly `ptr[end] - 1`
+entries; and every index in `idx` lies in `1:minor`. Throws `ArgumentError`
+naming the violated invariant, with `ptrname`/`idxname` naming the arrays in the
+format's own vocabulary. The pointer invariants are checked on a host copy of
+`ptr` (an `O(major)` transfer, accepted at construction time); the index range
+is checked by a device reduction, so `idx` is never transferred. Sortedness
+within a major slice is an unchecked documented assumption, matching
+`SparseArrays.sparse_check`.
+"""
+function compressed_check(
+        major::Integer, minor::Integer, ptr::MtlVector{Ti}, idx::MtlVector{Ti},
+        nzval::MtlVector, ptrname::String, idxname::String
+    ) where {Ti <: Integer}
+    length(ptr) == major + 1 ||
+        throw(ArgumentError("$(length(ptr)) == length($ptrname) != $(major + 1)"))
+    hostptr = Array(ptr)
+    hostptr[1] == 1 || throw(ArgumentError("$(hostptr[1]) == $ptrname[1] != 1"))
+    for i in 2:(major + 1)
+        hostptr[i - 1] <= hostptr[i] ||
+            throw(
+            ArgumentError(
+                "$(hostptr[i - 1]) == $ptrname[$(i - 1)] > $ptrname[$i] == $(hostptr[i])"
+            )
+        )
+    end
+    stored = Int(hostptr[major + 1]) - 1
+    length(idx) == stored ||
+        throw(ArgumentError("$(length(idx)) == length($idxname) != $ptrname[end] - 1 == $stored"))
+    length(nzval) == stored ||
+        throw(ArgumentError("$(length(nzval)) == length(nzval) != $ptrname[end] - 1 == $stored"))
+    if !isempty(idx)
+        bound = Ti(minor)
+        inrange = mapreduce(j -> (one(Ti) <= j) & (j <= bound), &, idx)
+        inrange || throw(ArgumentError("$idxname contains an index outside 1:$minor"))
+    end
+    return nothing
+end
+
 """
     DEFAULT_INDEX_TYPE
 
