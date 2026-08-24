@@ -1,19 +1,44 @@
 # The benchmark suite. `runbenchmarks.jl` activates the environment, includes
-# this file, and runs `SUITE`.
+# this file, and times every case in `SUITE`.
 #
-# Convention: one BenchmarkGroup per operation, keyed by representation
+# Convention: one group per operation, each case keyed by representation
 # ("SparseArrays", "device sparse", "device dense"), format, element type, and
 # problem size, so that both crossover sizes stated in docs/src/roadmap.md —
 # device sparse over CPU sparse, and device sparse over device dense — can be
-# read directly from the results. Device benchmarks synchronize before timing.
+# read directly from the results.
+#
+# Timing is by the standard-library macros, not BenchmarkTools: a case marked
+# `device` is timed by `Metal.@timed` (the macro behind `Metal.@time`, which
+# synchronizes the GPU before the expression and wraps it in `Metal.@sync`, so
+# the measurement covers the complete device work and nothing else) and a host
+# case by `Base.@elapsed` (the timing core of `Base.@time`). Each case is run
+# once untimed to compile, then the minimum over `REPS` repetitions is
+# reported; single-shot timings measured ~250 us high against minimums on this
+# hardware.
 
-using BenchmarkTools
 using LinearAlgebra: I, kron
 using Metal: Metal, MtlArray
 using MetalSparseArrays
 using SparseArrays: SparseMatrixCSC, sparse, spdiagm
 
-const SUITE = BenchmarkGroup()
+"""
+    Benchmark(group, key, device, thunk)
+
+One benchmark case: `thunk` is the zero-argument operation to time, `group`
+names the operation, `key` identifies representation, format, element type,
+and size, and `device` selects GPU-synchronized timing.
+"""
+struct Benchmark
+    group::String
+    key::Tuple
+    device::Bool
+    thunk::Function
+end
+
+const SUITE = Benchmark[]
+
+benchmark!(thunk::Function, group::String, key...; device::Bool = false) =
+    push!(SUITE, Benchmark(group, key, device, thunk))
 
 """
     laplacian_2d(Tv, n)
@@ -59,34 +84,32 @@ const DEVICE_FORMATS = ("CSR" => MtlSparseMatrixCSR, "CSC" => MtlSparseMatrixCSC
 # the roadmap's second crossover goal (device sparse over device dense) lives.
 const MAX_DENSE_ORDER = 4096
 
-function add_merge_entries!(group, A::SparseMatrixCSC{Tv}, B::SparseMatrixCSC{Tv}) where {Tv}
+function add_merge_cases!(group::String, A::SparseMatrixCSC{Tv}, B::SparseMatrixCSC{Tv}) where {Tv}
     N = size(A, 1)
-    group["SparseArrays", "CSC", Tv, N] = @benchmarkable $A .+ $B
+    benchmark!(() -> A .+ B, group, "SparseArrays", "CSC", Tv, N)
     for (name, F) in DEVICE_FORMATS
         dA = F{Tv, Int32}(A)
         dB = F{Tv, Int32}(B)
-        group["device sparse", name, Tv, N] = @benchmarkable Metal.@sync $dA .+ $dB
+        benchmark!(() -> dA .+ dB, group, "device sparse", name, Tv, N; device = true)
     end
     if N <= MAX_DENSE_ORDER
         dD1 = MtlArray(Matrix(A))
         dD2 = MtlArray(Matrix(B))
-        group["device dense", "dense", Tv, N] = @benchmarkable Metal.@sync $dD1 .+ $dD2
+        benchmark!(() -> dD1 .+ dD2, group, "device dense", "dense", Tv, N; device = true)
     end
-    return group
+    return nothing
 end
 
 # Grid sizes reach n = 512 (N = 262144, ~1.8M stored entries in the sum)
 # because the measured CPU/device crossover for the merge is near 460k stored
 # entries; a size range that stops short of the crossover cannot verify the
 # roadmap's performance goal.
-SUITE["sparse_sparse_add"] = BenchmarkGroup()
 for Tv in (Float32, Float16), n in (16, 64, 256, 512)
     A = laplacian_2d(Tv, n)
-    add_merge_entries!(SUITE["sparse_sparse_add"], A, offset_band(Tv, size(A, 1)))
+    add_merge_cases!("sparse_sparse_add", A, offset_band(Tv, size(A, 1)))
 end
 
-SUITE["sparse_sparse_add_dense_row"] = BenchmarkGroup()
 for Tv in (Float32,), N in (1024, 4096, 16384)
     A, B = dense_row_pair(Tv, N)
-    add_merge_entries!(SUITE["sparse_sparse_add_dense_row"], A, B)
+    add_merge_cases!("sparse_sparse_add_dense_row", A, B)
 end

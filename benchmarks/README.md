@@ -2,11 +2,18 @@
 
 Direct measurements of performance for the formats and operations in `src/`.
 
-- `benchmarks.jl` defines `SUITE`, a `BenchmarkTools.BenchmarkGroup` with one
-  group per operation, keyed by representation, format, element type, and
-  problem size.
+- `benchmarks.jl` defines `SUITE`, a vector of benchmark cases grouped per
+  operation and keyed by representation, format, element type, and problem
+  size.
 - `runbenchmarks.jl` is the entry point: `julia benchmarks/runbenchmarks.jl`
-  activates this environment, develops the package, and runs the suite.
+  activates this environment, develops the package, and times every case.
+
+Timing uses the standard-library macros, not BenchmarkTools: `Metal.@timed`
+(the macro behind `Metal.@time`, which synchronizes the GPU before the
+expression and wraps it in `Metal.@sync`) for device cases and `Base.@elapsed`
+(the timing core of `Base.@time`) for host cases. Each case is compiled
+untimed first, then the minimum over a fixed number of repetitions is
+reported.
 
 CI runs the suite informationally on pull requests and on a weekly schedule
 (`.github/workflows/Benchmarks.yml`); timing results never block a merge, but
