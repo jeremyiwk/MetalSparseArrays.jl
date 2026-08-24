@@ -16,7 +16,7 @@ module MetalSparseArrays
 
 using Adapt: Adapt
 using LinearAlgebra: LinearAlgebra
-using Metal: Metal, MtlArray, MtlMatrix, MtlVector
+using Metal: Metal, MtlArray, MtlMatrix, MtlVector, thread_position_in_grid
 using SparseArrays: SparseArrays, AbstractSparseArray, AbstractSparseMatrix,
     SparseMatrixCSC, nnz, sparse
 
@@ -30,5 +30,6 @@ include("coo.jl")
 include("conversions.jl")
 include("interface.jl")
 include("broadcast.jl")
+include("kernels/mergebroadcast.jl")
 
 end # module

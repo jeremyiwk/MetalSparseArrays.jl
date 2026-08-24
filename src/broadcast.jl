@@ -6,9 +6,9 @@
 # MtlMatrix, computed on the device. (SparseArrays instead keeps the sparse
 # container and stores every entry; the dense container is the CUSPARSE
 # convention, adopted by the roadmap.) Sparse-sparse broadcast keeps the union
-# pattern, matching SparseArrays exactly; it currently computes through the
-# host fallback (Metal.MPS has no sparse primitive — surveyed), and the device
-# pattern-merge kernel replaces the fallback as the next kernels/ feature.
+# pattern, matching SparseArrays exactly, computed by the device pattern merge
+# in src/kernels/mergebroadcast.jl where it applies and by the host fallback
+# below otherwise (Metal.MPS has no sparse primitive — surveyed).
 # In-place `A .= rhs` follows SparseArrays semantics by running the stdlib
 # broadcast on a host mirror and rebinding the destination's storage arrays.
 
@@ -64,14 +64,10 @@ function Base.copy(bc::Broadcast.Broadcasted{MtlSparseStyle})
             return with_nzval(A, nzval)
         elseif iszero(fzero)
             # Union-pattern sparse-sparse broadcast, matching SparseArrays
-            # exactly; through the host fallback until the pattern-merge
-            # kernel lands. Result format and Ti follow the first sparse
-            # operand.
-            hosts = map(
-                a -> a isa AbstractMtlSparseMatrix ? SparseMatrixCSC(a) : a, args
-            )
-            hostresult = Broadcast.materialize(Broadcast.broadcasted(flat.f, hosts...))
-            return format_like(A, hostresult)
+            # exactly. Result format and Ti follow the first sparse operand.
+            merged = try_merge_broadcast(flat.f, args)
+            merged === nothing || return merged
+            return host_union_broadcast(flat.f, args, A)
         end
     end
     # Densifying path (CUSPARSE convention): a non-zero-preserving function or
@@ -79,6 +75,14 @@ function Base.copy(bc::Broadcast.Broadcasted{MtlSparseStyle})
     # broadcast machinery.
     mapped = map(a -> a isa AbstractMtlSparseMatrix ? MtlMatrix(a) : a, args)
     return Broadcast.materialize(Broadcast.broadcasted(flat.f, mapped...))
+end
+
+# Sparse-sparse broadcast on the host, for the cases outside the domain of
+# `try_merge_broadcast`: the stdlib broadcast over host mirrors, moved back in
+# the format and index type of `A`.
+function host_union_broadcast(f, args::Tuple, A::AbstractMtlSparseMatrix)
+    hosts = map(a -> a isa AbstractMtlSparseMatrix ? SparseMatrixCSC(a) : a, args)
+    return format_like(A, Broadcast.materialize(Broadcast.broadcasted(f, hosts...)))
 end
 
 format_like(::MtlSparseMatrixCSC{<:Any, Ti}, A::SparseMatrixCSC{Tv}) where {Tv, Ti} =

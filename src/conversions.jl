@@ -134,10 +134,15 @@ function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, 
     return sparse(Array(A.rowval), Array(A.colval), Array(A.nzval), A.m, A.n)
 end
 
-# `as_coo` gives every format a COO view of itself for the dense scatter below;
-# same-format is the identity, no copy.
+# `as_coo` and `as_csr` give every format a view of itself in the named
+# format, for the dense scatter below and the row-major merge in
+# `src/kernels/mergebroadcast.jl`; same-format is the identity, no copy.
+# `as_csc` sits with its caller in `interface.jl`.
 as_coo(A::MtlSparseMatrixCOO) = A
 as_coo(A::AbstractMtlSparseMatrix) = MtlSparseMatrixCOO(A)
+
+as_csr(A::MtlSparseMatrixCSR) = A
+as_csr(A::AbstractMtlSparseMatrix) = MtlSparseMatrixCSR(A)
 
 """
     Array(A::AbstractMtlSparseMatrix{Tv}) -> Matrix{Tv}

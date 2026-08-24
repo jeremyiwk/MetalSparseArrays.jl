@@ -96,7 +96,7 @@ unverified on Metal. Element types are discovered by probing the device.
 - `Base.show` displays every format legibly at the REPL without scalar indexing
   (summary line plus a bounded number of entries fetched in one transfer).
 
-## Phase 2 — Array interface *(in progress: similar/copy/collect, rowvals/findnz, scalar indexing policy, broadcasting incl. sparse-sparse union and in-place assignment shipped)*
+## Phase 2 — Array interface *(in progress: similar/copy/collect, rowvals/findnz, scalar indexing policy, broadcasting incl. the device sparse-sparse pattern merge and in-place assignment shipped)*
 
 **Deliverables**
 
@@ -110,10 +110,12 @@ unverified on Metal. Element types are discovered by probing the device.
   (`A .+ 1`, `A .* NaN`) or a broadcast mixing sparse with dense **densifies to
   a dense device matrix**, the `CUDA` convention (maintainer decision
   2026-08-24; `SparseArrays` instead keeps the sparse container and stores
-  every entry). Sparse-sparse broadcast keeps the union pattern, matching both
-  references, and needs a pattern-merge kernel — survey `Metal.MPS` for a
-  usable primitive before writing one (kernels live under `src/kernels/`).
-  In-place `A .= ...` follows `SparseArrays` semantics.
+  every entry). Sparse-sparse broadcast matches `SparseArrays` exactly — the
+  union of the two patterns with the function evaluated at every union
+  position and every numerically zero result dropped — computed by the device
+  pattern-merge kernel in `src/kernels/mergebroadcast.jl`, the first
+  hand-written kernel (`Metal.MPS` was surveyed and wraps no sparse
+  primitive). In-place `A .= ...` follows `SparseArrays` semantics.
 - COO assembly: `sortperm` on `(j, i)`, duplicate accumulation with `+`,
   matching `sparse(I, J, V, m, n, +)`.
 - Constructor parity with `SparseArrays`: the constructors `SparseArrays`

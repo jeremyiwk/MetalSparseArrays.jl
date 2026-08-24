@@ -97,6 +97,20 @@ function index_range_check(idx::MtlVector{Ti}, bound::Integer, name::String) whe
 end
 
 """
+    Unchecked
+
+Internal sentinel whose singleton `unchecked` selects the format inner
+constructors that skip invariant validation. For device arrays produced by a
+kernel that guarantees the invariants by construction, where validation would
+force a host synchronization; this is the same line `SparseArrays` draws
+between its validating user-facing constructors and the direct construction
+its own kernels use. Public constructors always validate. Not exported.
+"""
+struct Unchecked end
+
+const unchecked = Unchecked()
+
+"""
     DEFAULT_INDEX_TYPE
 
 The integer type used for row, column, and pointer arrays of device-resident sparse

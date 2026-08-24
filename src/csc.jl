@@ -39,6 +39,15 @@ mutable struct MtlSparseMatrixCSC{Tv, Ti <: Integer} <: AbstractMtlSparseMatrix{
         compressed_check(n, m, colptr, rowval, nzval, "colptr", "rowval")
         return new{Tv, Ti}(m, n, colptr, rowval, nzval)
     end
+
+    # Unchecked construction, for arrays a kernel guarantees by construction;
+    # see the docstring of `Unchecked` in common.jl.
+    function MtlSparseMatrixCSC{Tv, Ti}(
+            ::Unchecked, m::Integer, n::Integer, colptr::MtlVector{Ti},
+            rowval::MtlVector{Ti}, nzval::MtlVector{Tv}
+        ) where {Tv, Ti <: Integer}
+        return new{Tv, Ti}(m, n, colptr, rowval, nzval)
+    end
 end
 
 function MtlSparseMatrixCSC(

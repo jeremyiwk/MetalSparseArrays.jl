@@ -8,15 +8,85 @@
 # read directly from the results. Device benchmarks synchronize before timing.
 
 using BenchmarkTools
+using LinearAlgebra: I, kron
+using Metal: Metal, MtlArray
 using MetalSparseArrays
+using SparseArrays: SparseMatrixCSC, sparse, spdiagm
 
 const SUITE = BenchmarkGroup()
 
-# Example shape for when the first kernel lands:
-#
-# SUITE["spmv"] = BenchmarkGroup()
-# for n in (64, 256, 1024), Tv in (Float32,)
-#     A = laplacian_2d(Tv, n)
-#     x = ones(Tv, size(A, 2))
-#     SUITE["spmv"]["SparseArrays", Tv, n] = @benchmarkable $A * $x
-# end
+"""
+    laplacian_2d(Tv, n)
+
+The `n^2`-by-`n^2` five point negative Laplacian on an `n`-by-`n` grid with
+homogeneous Dirichlet boundary conditions. Mirrors the definition in
+`test/testsuite.jl`; repeated here because the benchmark environment does not
+depend on the test environment.
+"""
+function laplacian_2d(::Type{Tv}, n::Integer) where {Tv}
+    tridiagonal = spdiagm(
+        -1 => fill(-one(Tv), n - 1),
+        0 => fill(Tv(2), n),
+        1 => fill(-one(Tv), n - 1)
+    )
+    identity_n = sparse(one(Tv) * I, n, n)
+    return kron(identity_n, tridiagonal) + kron(tridiagonal, identity_n)
+end
+
+# A second merge operand whose pattern shares the Laplacian's diagonal, misses
+# its off-diagonal bands, and adds a band of its own, so the merge sees all
+# three kinds of union position (shared, first only, second only) rather than
+# a degenerate case. Deterministic, so results are comparable across runs.
+function offset_band(::Type{Tv}, N::Integer) where {Tv}
+    return sparse(one(Tv) * I, N, N) + spdiagm(N, N, 2 => fill(one(Tv), N - 2))
+end
+
+# Load imbalance: every stored entry of both operands lies in one row, so the
+# CSR merge gives one thread all the work. This pattern exists to measure the
+# worst case of the one-thread-per-slice launch.
+function dense_row_pair(::Type{Tv}, N::Integer) where {Tv}
+    columns = collect(1:N)
+    return (
+        sparse(fill(1, N), columns, fill(one(Tv), N), N, N),
+        sparse(fill(1, N), columns, fill(Tv(2), N), N, N),
+    )
+end
+
+const DEVICE_FORMATS = ("CSR" => MtlSparseMatrixCSR, "CSC" => MtlSparseMatrixCSC)
+
+# Dense operands are full m-by-n arrays, so the dense comparison is only
+# affordable up to this order; the sparse entries run past it, which is where
+# the roadmap's second crossover goal (device sparse over device dense) lives.
+const MAX_DENSE_ORDER = 4096
+
+function add_merge_entries!(group, A::SparseMatrixCSC{Tv}, B::SparseMatrixCSC{Tv}) where {Tv}
+    N = size(A, 1)
+    group["SparseArrays", "CSC", Tv, N] = @benchmarkable $A .+ $B
+    for (name, F) in DEVICE_FORMATS
+        dA = F{Tv, Int32}(A)
+        dB = F{Tv, Int32}(B)
+        group["device sparse", name, Tv, N] = @benchmarkable Metal.@sync $dA .+ $dB
+    end
+    if N <= MAX_DENSE_ORDER
+        dD1 = MtlArray(Matrix(A))
+        dD2 = MtlArray(Matrix(B))
+        group["device dense", "dense", Tv, N] = @benchmarkable Metal.@sync $dD1 .+ $dD2
+    end
+    return group
+end
+
+# Grid sizes reach n = 512 (N = 262144, ~1.8M stored entries in the sum)
+# because the measured CPU/device crossover for the merge is near 460k stored
+# entries; a size range that stops short of the crossover cannot verify the
+# roadmap's performance goal.
+SUITE["sparse_sparse_add"] = BenchmarkGroup()
+for Tv in (Float32, Float16), n in (16, 64, 256, 512)
+    A = laplacian_2d(Tv, n)
+    add_merge_entries!(SUITE["sparse_sparse_add"], A, offset_band(Tv, size(A, 1)))
+end
+
+SUITE["sparse_sparse_add_dense_row"] = BenchmarkGroup()
+for Tv in (Float32,), N in (1024, 4096, 16384)
+    A, B = dense_row_pair(Tv, N)
+    add_merge_entries!(SUITE["sparse_sparse_add_dense_row"], A, B)
+end
