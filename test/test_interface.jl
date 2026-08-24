@@ -1,16 +1,5 @@
 # Array interface: similar, copy, collect, rowvals, findnz, scalar indexing.
 
-"""
-    same_pattern(A, dB)
-
-Whether the device matrix `dB` has exactly the sparsity pattern of the host
-`A`: equal dimensions and index arrays, values ignored.
-"""
-function same_pattern(A::SparseMatrixCSC, dB::AbstractMtlSparseMatrix)
-    B = SparseMatrixCSC(dB)
-    return size(A) == size(B) && A.colptr == B.colptr && A.rowval == B.rowval
-end
-
 @testset "array interface" begin
     if DEVICE_AVAILABLE
         @testset "similar $F Tv=$Tv" for F in SPARSE_TYPES, Tv in ELEMENT_TYPES

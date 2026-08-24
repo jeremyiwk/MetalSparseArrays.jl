@@ -114,6 +114,36 @@ function exact_equal(A::SparseMatrixCSC, B::SparseMatrixCSC)
 end
 
 """
+    same_pattern(A, dB)
+
+Whether the device matrix `dB` has exactly the sparsity pattern of the host
+`A`: equal dimensions and index arrays, values ignored.
+"""
+function same_pattern(A::SparseMatrixCSC, dB::AbstractMtlSparseMatrix)
+    B = SparseMatrixCSC(dB)
+    return size(A) == size(B) && A.colptr == B.colptr && A.rowval == B.rowval
+end
+
+"""
+    device_supports(f, Tv)
+
+Whether broadcasting the scalar function `f` over a dense device vector of
+element type `Tv` compiles and runs. When it does not (for example `abs` on
+`Complex{BFloat16}`: `hypot` fails to compile in `Metal.jl` itself — see
+`metal_bfloat16_hypot_bug.jl`), the sparse case is skipped with a notice
+rather than failed: the limitation is upstream, and a sparse-side regression
+would still fail because the probe uses the dense array path only.
+"""
+function device_supports(f, ::Type{Tv}) where {Tv}
+    return try
+        Array(f.(MtlVector{Tv}([one(Tv)])))
+        true
+    catch
+        false
+    end
+end
+
+"""
     pattern_corpus(Tv)
 
 The corpus of host matrices format round-trip tests run over: random patterns

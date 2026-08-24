@@ -105,9 +105,15 @@ unverified on Metal. Element types are discovered by probing the device.
 - `nnz`, `nonzeros`, `rowvals` (CSC), `findnz` returning host-usable triples.
 - The scalar `getindex`/`setindex!` policy: erroring under
   `Metal.allowscalar(false)`, following the `CUSPARSE` precedent; documented.
-- Broadcasting over stored values for zero-preserving scalar functions
-  (`A .* 2`, `abs.(A)`); a function with `f(0) ≠ 0` follows the `CUSPARSE`
-  policy (error, do not densify silently).
+- Broadcasting: zero-preserving scalar functions (`A .* 2`, `abs.(A)`) apply
+  to stored values with the pattern preserved; a function with `f(0) ≠ 0`
+  (`A .+ 1`, `A .* NaN`) or a broadcast mixing sparse with dense **densifies to
+  a dense device matrix**, the `CUDA` convention (maintainer decision
+  2026-08-24; `SparseArrays` instead keeps the sparse container and stores
+  every entry). Sparse-sparse broadcast keeps the union pattern, matching both
+  references, and needs a pattern-merge kernel — survey `Metal.MPS` for a
+  usable primitive before writing one (kernels live under `src/kernels/`).
+  In-place `A .= ...` follows `SparseArrays` semantics.
 - COO assembly: `sortperm` on `(j, i)`, duplicate accumulation with `+`,
   matching `sparse(I, J, V, m, n, +)`.
 - Constructor parity with `SparseArrays`: the constructors `SparseArrays`
@@ -125,8 +131,13 @@ unverified on Metal. Element types are discovered by probing the device.
 - `similar` variants produce the documented format, element type, and index
   type; `collect`/`Array` equal `Array(SparseMatrixCSC(dA))` elementwise.
 - Broadcasting: zero-preserving functions preserve the pattern exactly (stored
-  zeros included); non-zero-preserving functions raise the documented error; the
-  whole broadcast suite runs under `allowscalar(false)`.
+  zeros included) and are bit-identical to the dense device broadcast of the
+  same stored values (backend consistency — the tolerance-free criterion);
+  non-zero-preserving functions and sparse-dense mixes densify to the dense
+  device result, elementwise equal to the dense device computation; the whole
+  broadcast suite runs under `allowscalar(false)`. Device-libm agreement with
+  the host (a few ulp) is a documented assumption checked in one dedicated
+  test, not smeared across the suite.
 - COO assembly with duplicate, unsorted, and adversarially ordered input
   (reverse-sorted, all-duplicates collapsing to one entry, interleaved columns)
   matches `sparse(I, J, V, m, n, +)` exactly in structure and to `c·k·u` in

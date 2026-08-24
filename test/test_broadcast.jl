@@ -1,60 +1,20 @@
-# Broadcasting over stored values: pattern preserved exactly for
-# zero-preserving functions, ArgumentError for densifying ones.
-
-"""
-    broadcast_reference(f, A)
-
-The expected result of a zero-preserving broadcast over the device form of
-`A`: the same pattern with the scalar function `f` applied to the stored
-values on the host.
-"""
-function broadcast_reference(f, A::SparseMatrixCSC{<:Any, Ti}) where {Ti}
-    return SparseMatrixCSC(A.m, A.n, copy(A.colptr), copy(A.rowval), f.(nonzeros(A)))
-end
-
-"""
-    pattern_and_values_close(expected, B; rtol)
-
-Pattern exactly equal and stored values within `rtol` relative (elementwise,
-`isequal` for nonfinite). The comparison for broadcasts of libm-backed
-functions (`abs` of a complex number is `hypot`), whose device implementation
-may differ from the host by a few ulp; exact arithmetic still uses
-`exact_equal`.
-"""
-function pattern_and_values_close(expected::SparseMatrixCSC, B::SparseMatrixCSC; rtol)
-    size(expected) == size(B) || return false
-    expected.colptr == B.colptr && expected.rowval == B.rowval || return false
-    return all(zip(expected.nzval, B.nzval)) do (x, y)
-        isfinite(x) && isfinite(y) ? abs(x - y) <= rtol * max(abs(x), one(abs(x))) :
-            isequal(x, y)
-    end
-end
-
-"""
-    device_supports(f, Tv)
-
-Whether broadcasting the scalar function `f` over a dense device vector of
-element type `Tv` compiles and runs. When it does not (for example `abs` on
-`Complex{BFloat16}`: `hypot` generates invalid IR in `Metal.jl` itself), the
-sparse broadcast cannot be expected to work either — the limitation is
-upstream, and the sparse case is skipped with a notice rather than failed.
-"""
-function device_supports(f, ::Type{Tv}) where {Tv}
-    return try
-        Array(f.(MtlVector{Tv}([one(Tv)])))
-        true
-    catch
-        false
-    end
-end
+# Broadcasting over stored values. The primary criterion is backend
+# consistency: the sparse broadcast must be bit-identical to the same function
+# broadcast over the same values as a dense device vector — both run the same
+# Metal libm, so this isolates our layer and needs no tolerance. The device
+# libm's agreement with the host is a separate, documented assumption checked
+# once at the end.
 
 @testset "broadcast" begin
     if DEVICE_AVAILABLE
         @testset "zero-preserving $F Tv=$Tv" for F in SPARSE_TYPES, Tv in ELEMENT_TYPES
             two = Tv(2)
             # Each case pairs the device broadcast with the scalar function
-            # defining its host reference, and states whether the comparison
-            # is bitwise (exact arithmetic) or toleranced (libm-backed).
+            # that defines its reference.
+            # `:exact` cases are exact arithmetic, bit-identical between host
+            # and device; `:libm` cases (abs of a complex number is hypot) may
+            # differ from the host by a few ulp, so their host agreement is
+            # checked once in the libm-assumption test set below instead.
             cases = [
                 (dA -> dA .* two, v -> v * two, :exact),
                 (dA -> two .* dA, v -> two * v, :exact),
@@ -65,7 +25,6 @@ end
                 (dA -> two .* dA .* two, v -> two * v * two, :exact),
                 (dA -> identity.(dA), identity, :exact),
             ]
-            rtol = 4 * Float64(MetalSparseArrays.unit_roundoff(Tv))
             for (device_f, scalar_f, comparison) in cases
                 if !device_supports(scalar_f, Tv)
                     @info "skipping broadcast case for $Tv: unsupported by Metal.jl itself" scalar_f
@@ -75,12 +34,17 @@ end
                     dA = F{Tv, Int32}(A)
                     dB = device_f(dA)
                     @test dB isa F
-                    expected = broadcast_reference(scalar_f, A)
-                    B = SparseMatrixCSC(dB)
+                    # Pattern preserved exactly, stored zeros included.
+                    @test same_pattern(A, dB)
+                    # Backend consistency, tolerance-free: the sparse broadcast
+                    # must be bit-identical to the dense device broadcast over
+                    # the matrix's own stored values (same order, same libm).
+                    device_reference = Array(scalar_f.(nonzeros(dA)))
+                    @test isequal(Array(nonzeros(dB)), device_reference)
+                    # Host agreement for exact arithmetic, in storage order.
                     if comparison === :exact
-                        @test exact_equal(expected, B)
-                    else
-                        @test pattern_and_values_close(expected, B; rtol)
+                        host_reference = scalar_f.(Array(nonzeros(dA)))
+                        @test isequal(Array(nonzeros(dB)), host_reference)
                     end
                 end
             end
@@ -91,26 +55,68 @@ end
             dA = MtlSparseMatrixCSR{ComplexF32, Int32}(A)
             dB = abs2.(dA)
             @test dB isa MtlSparseMatrixCSR{Float32, Int32}
-            @test exact_equal(broadcast_reference(abs2, A), SparseMatrixCSC(dB))
+            @test same_pattern(A, dB)
+            @test Array(nonzeros(dB)) == Array(abs2.(nonzeros(dA)))
         end
 
-        @testset "densifying broadcasts throw" begin
+        @testset "densifying broadcasts give dense device results $F" for F in SPARSE_TYPES
             A = testsparse(Float32, Int, 6, 6; seed = 15)
-            for F in SPARSE_TYPES
-                dA = F{Float32, Int32}(A)
-                @test_throws ArgumentError dA .+ 1
-                @test_throws ArgumentError cos.(dA)
-                @test_throws ArgumentError dA .^ 0
-                @test_throws ArgumentError (dA .* 2) .+ 1
+            dA = F{Float32, Int32}(A)
+            D = Array(A)
+            # Comparison is against the same expression over the dense device
+            # matrix (bit-exact, same backend); host agreement additionally
+            # for exact arithmetic (cos is libm-backed and may differ by ulp).
+            for (device_f, host_f, comparison) in [
+                    (dA -> dA .+ 1, D -> D .+ 1, :exact),
+                    (dA -> cos.(dA), D -> cos.(D), :libm),
+                    (dA -> dA .^ 0, D -> D .^ 0, :exact),
+                    (dA -> (dA .* 2) .+ 1, D -> (D .* 2) .+ 1, :exact),
+                    (dA -> dA .* NaN32, D -> D .* NaN32, :exact),
+                ]
+                dB = device_f(dA)
+                @test dB isa MtlMatrix{Float32}
+                @test isequal(Array(dB), Array(host_f(MtlArray(D))))
+                comparison === :exact && @test isequal(Array(dB), host_f(D))
             end
         end
 
-        @testset "unsupported operand mixes throw" begin
+        @testset "sparse with dense operand densifies $F" for F in SPARSE_TYPES
+            A = testsparse(Float32, Int, 6, 6; seed = 16)
+            dA = F{Float32, Int32}(A)
+            dD = MtlArray(fill(2.0f0, 6, 6))
+            dB = dA .+ dD
+            @test dB isa MtlMatrix{Float32}
+            @test Array(dB) == Array(A) .+ 2.0f0
+            dC = dA .* dD
+            @test dC isa MtlMatrix{Float32}
+            @test Array(dC) == Array(A) .* 2.0f0
+        end
+
+        @testset "sparse-sparse broadcast not yet implemented" begin
             A = testsparse(Float32, Int, 6, 6; seed = 16)
             dA = MtlSparseMatrixCSC{Float32, Int32}(A)
             dB = MtlSparseMatrixCSC{Float32, Int32}(A)
             @test_throws ArgumentError dA .+ dB
             @test_throws ArgumentError dA .* dB
+        end
+
+        @testset "device libm accuracy assumption" begin
+            # The one place the device libm is compared against the host: for
+            # libm-backed functions (abs of complex is hypot) the two
+            # implementations are each accurate to a few ulp, so they agree to
+            # 4u relative. Everything else in this file is bit-exact against
+            # the device reference and needs no tolerance.
+            for Tv in ELEMENT_TYPES
+                device_supports(abs, Tv) || continue
+                rtol = 4 * Float64(MetalSparseArrays.unit_roundoff(Tv))
+                values = nonzeros(testsparse(Tv, Int, 40, 40; density = 0.3, seed = 17))
+                dev = Array(abs.(MtlVector{Tv}(values)))
+                host = abs.(values)
+                @test all(
+                    abs(d - h) <= rtol * max(abs(h), one(abs(h)))
+                        for (d, h) in zip(dev, host)
+                )
+            end
         end
     else
         @info "broadcast tests skipped: no functional Metal device"
