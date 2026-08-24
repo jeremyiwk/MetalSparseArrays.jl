@@ -21,8 +21,8 @@ SparseArrays.nnz(A::AbstractMtlSparseMatrix) = length(A.nzval)
     nonzeros(A::AbstractMtlSparseMatrix)
 
 The `MtlVector` of stored values of `A`, in the storage order of the format
-(row-major for CSR, column-major for CSC), aliasing the matrix. Stored entries
-may hold the value zero.
+(row-major for CSR and COO, column-major for CSC), aliasing the matrix. Stored
+entries may hold the value zero.
 """
 SparseArrays.nonzeros(A::AbstractMtlSparseMatrix) = A.nzval
 
@@ -82,11 +82,17 @@ function compressed_check(
         throw(ArgumentError("$(length(idx)) == length($idxname) != $ptrname[end] - 1 == $stored"))
     length(nzval) == stored ||
         throw(ArgumentError("$(length(nzval)) == length(nzval) != $ptrname[end] - 1 == $stored"))
-    if !isempty(idx)
-        bound = Ti(minor)
-        inrange = mapreduce(j -> (one(Ti) <= j) & (j <= bound), &, idx)
-        inrange || throw(ArgumentError("$idxname contains an index outside 1:$minor"))
-    end
+    index_range_check(idx, minor, idxname)
+    return nothing
+end
+
+# Checks `1 <= idx[k] <= bound` for every entry by a device reduction; `idx` is
+# never transferred to the host.
+function index_range_check(idx::MtlVector{Ti}, bound::Integer, name::String) where {Ti}
+    isempty(idx) && return nothing
+    b = Ti(bound)
+    inrange = mapreduce(j -> (one(Ti) <= j) & (j <= b), &, idx)
+    inrange || throw(ArgumentError("$name contains an index outside 1:$bound"))
     return nothing
 end
 

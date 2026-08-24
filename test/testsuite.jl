@@ -73,10 +73,6 @@ suite as soon as the backend accepts it.
 const ELEMENT_TYPES = DEVICE_AVAILABLE ? supported_element_types(MtlArray) :
     collect(CANDIDATE_ELEMENT_TYPES)
 
-# Make the exercised configuration visible in every test log, so a coverage
-# regression (a type silently dropping out of the probed set) is observable.
-@info "MetalSparseArrays test configuration" DEVICE_AVAILABLE ELEMENT_TYPES INDEX_TYPES
-
 """
     INDEX_TYPES
 
@@ -85,13 +81,17 @@ default and matches `CUDA.CUSPARSE`.
 """
 const INDEX_TYPES = (Int32,)
 
+# Make the exercised configuration visible in every test log, so a coverage
+# regression (a type silently dropping out of the probed set) is observable.
+@info "MetalSparseArrays test configuration" DEVICE_AVAILABLE ELEMENT_TYPES INDEX_TYPES
+
 """
     SPARSE_TYPES
 
 Device sparse matrix types the suite runs against. Each format is appended here as
 it is implemented, and every format-independent test set loops over this list.
 """
-const SPARSE_TYPES = Any[MtlSparseMatrixCSC, MtlSparseMatrixCSR]
+const SPARSE_TYPES = Any[MtlSparseMatrixCOO, MtlSparseMatrixCSC, MtlSparseMatrixCSR]
 
 # Cross-cutting requirement: library code never scalar indexes a device array.
 # Any code path that tries fails the suite instead of silently round tripping

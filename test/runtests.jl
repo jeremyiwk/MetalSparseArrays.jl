@@ -4,4 +4,5 @@ include("testsuite.jl")
     include("test_common.jl")
     include("test_csr.jl")
     include("test_csc.jl")
+    include("test_coo.jl")
 end

@@ -20,10 +20,12 @@ using Metal: Metal, MtlArray, MtlVector
 using SparseArrays: SparseArrays, AbstractSparseArray, AbstractSparseMatrix,
     SparseMatrixCSC, nnz, sparse
 
-export AbstractMtlSparseMatrix, MtlSparseMatrixCSC, MtlSparseMatrixCSR
+export AbstractMtlSparseMatrix, MtlSparseMatrixCOO, MtlSparseMatrixCSC,
+    MtlSparseMatrixCSR
 
 include("common.jl")
 include("csr.jl")
 include("csc.jl")
+include("coo.jl")
 
 end # module

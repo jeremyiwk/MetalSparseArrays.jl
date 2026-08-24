@@ -60,7 +60,7 @@ reproducibility. Device test sets are skipped on machines without a GPU for loca
 convenience only: CI requires the device (`CI_EXPECT_DEVICE`), so nothing merges
 unverified on Metal. Element types are discovered by probing the device.
 
-## Phase 1 — Storage formats *(in progress: CSR and CSC shipped)*
+## Phase 1 — Storage formats *(in progress: CSR, CSC, and COO shipped)*
 
 **Deliverables**
 
@@ -110,11 +110,18 @@ unverified on Metal. Element types are discovered by probing the device.
   policy (error, do not densify silently).
 - COO assembly: `sortperm` on `(j, i)`, duplicate accumulation with `+`,
   matching `sparse(I, J, V, m, n, +)`.
+- Constructor parity with `SparseArrays`: the constructors `SparseArrays`
+  accepts work with device storage — `sparse`/format constructors from
+  structured matrices over device vectors (`Diagonal(::MtlVector)`,
+  `Bidiagonal`, `Tridiagonal`, `SymTridiagonal`) and `spdiagm`-style
+  construction. Also convenient for building test problems directly on device.
 
 **Phase gate**
 
 - Every listed method agrees with the reference exactly for structural output
   and to `c·u` for value output, across formats, `Tv`, and `Ti`.
+- Structured-matrix constructors agree exactly (structure and values) with
+  `sparse` applied to the same structured matrix over host vectors.
 - `similar` variants produce the documented format, element type, and index
   type; `collect`/`Array` equal `Array(SparseMatrixCSC(dA))` elementwise.
 - Broadcasting: zero-preserving functions preserve the pattern exactly (stored
@@ -241,6 +248,10 @@ headline promise.
 
 - Kernel optimization guided by the measured crossovers; format-selection
   guidance in the documentation backed by the benchmark table.
+- REPL quality-of-life display matching `SparseArrays`: the pattern/entry
+  rendering `SparseMatrixCSC` gives at the REPL (braille pattern preview and
+  the truncated entry listing), produced from a bounded number of entries
+  fetched in one host transfer — never by scalar indexing.
 - Comparison against the documented behavior of `CUDA.CUSPARSE` for API parity.
 - Complete documentation with doctested examples; registration in General.
 
