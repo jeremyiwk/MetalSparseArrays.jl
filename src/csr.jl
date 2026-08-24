@@ -24,9 +24,9 @@ Stored entries with the value zero are preserved, matching `SparseArrays`.
 Convert back with `SparseMatrixCSC(A)` or `adapt(Array, A)`; the round trip is
 exact, including the sparsity pattern and index order.
 """
-struct MtlSparseMatrixCSR{Tv, Ti <: Integer} <: AbstractMtlSparseMatrix{Tv, Ti}
-    m::Int
-    n::Int
+mutable struct MtlSparseMatrixCSR{Tv, Ti <: Integer} <: AbstractMtlSparseMatrix{Tv, Ti}
+    const m::Int
+    const n::Int
     rowptr::MtlVector{Ti}
     colval::MtlVector{Ti}
     nzval::MtlVector{Tv}

@@ -24,9 +24,9 @@ Stored entries with the value zero are preserved, matching `SparseArrays`.
 Convert back with `SparseMatrixCSC(A)` or `adapt(Array, A)`; the round trip is
 exact. `adapt(MtlArray, A)` on a host `SparseMatrixCSC` produces this format.
 """
-struct MtlSparseMatrixCSC{Tv, Ti <: Integer} <: AbstractMtlSparseMatrix{Tv, Ti}
-    m::Int
-    n::Int
+mutable struct MtlSparseMatrixCSC{Tv, Ti <: Integer} <: AbstractMtlSparseMatrix{Tv, Ti}
+    const m::Int
+    const n::Int
     colptr::MtlVector{Ti}
     rowval::MtlVector{Ti}
     nzval::MtlVector{Tv}

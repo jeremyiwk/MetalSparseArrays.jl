@@ -92,12 +92,70 @@
             @test Array(dC) == Array(A) .* 2.0f0
         end
 
-        @testset "sparse-sparse broadcast not yet implemented" begin
-            A = testsparse(Float32, Int, 6, 6; seed = 16)
-            dA = MtlSparseMatrixCSC{Float32, Int32}(A)
-            dB = MtlSparseMatrixCSC{Float32, Int32}(A)
-            @test_throws ArgumentError dA .+ dB
-            @test_throws ArgumentError dA .* dB
+        @testset "sparse-sparse union $F Tv=$Tv" for F in SPARSE_TYPES,
+                Tv in (Float32, ComplexF32)
+
+            pairs = [
+                (
+                    testsparse(Tv, Int, 17, 13; density = 0.15, seed = 20),
+                    testsparse(Tv, Int, 17, 13; density = 0.15, seed = 21),
+                ),
+                # Disjoint patterns.
+                (
+                    sparse(1:5, 1:5, fill(Tv(2), 5), 5, 5),
+                    sparse(1:4, 2:5, fill(Tv(3), 4), 5, 5),
+                ),
+                # One operand empty.
+                (testsparse(Tv, Int, 6, 6; seed = 22), spzeros(Tv, 6, 6)),
+            ]
+            for (A, B) in pairs, op in (+, -, *)
+                dA = F{Tv, Int32}(A)
+                dB2 = F{Tv, Int32}(B)
+                dC = broadcast(op, dA, dB2)
+                @test dC isa F{Tv, Int32}
+                @test exact_equal(broadcast(op, A, B), SparseMatrixCSC(dC))
+            end
+        end
+
+        @testset "sparse-sparse mixed format and densifying" begin
+            A = testsparse(Float32, Int, 8, 8; seed = 23)
+            B = testsparse(Float32, Int, 8, 8; seed = 24)
+            dR = MtlSparseMatrixCSR{Float32, Int32}(A)
+            dC = MtlSparseMatrixCSC{Float32, Int32}(B)
+            # Result format follows the first sparse operand.
+            mixed = dR .+ dC
+            @test mixed isa MtlSparseMatrixCSR{Float32, Int32}
+            @test exact_equal(A .+ B, SparseMatrixCSC(mixed))
+            # f(0, 0) != 0 densifies, per the CUDA convention.
+            eq = dR .== dC
+            @test eq isa MtlMatrix{Bool}
+            @test Array(eq) == (Array(A) .== Array(B))
+        end
+
+        @testset "in-place A .= rhs $F" for F in SPARSE_TYPES
+            A0 = sparse([1, 3], [1, 2], Float32[1, 2], 3, 3)
+            D = Float32[0 5 0; 0 0 0; 6 0 0]
+            B = sparse([2], [3], Float32[9], 3, 3)
+            # Each case applies the identical assignment to the device matrix
+            # and to a host copy; stdlib defines correct.
+            cases = [
+                (dA -> dA .= 0, hA -> hA .= 0),
+                (dA -> dA .= 1, hA -> hA .= 1),
+                (dA -> dA .= D, hA -> hA .= D),
+                (dA -> dA .= MtlArray(D), hA -> hA .= D),
+                (dA -> dA .= F{Float32, Int32}(B), hA -> hA .= B),
+                (dA -> dA .= dA .+ 1, hA -> hA .= hA .+ 1),
+                (dA -> dA .*= 2, hA -> hA .*= 2),
+            ]
+            for (device_case, host_case) in cases
+                dA = F{Float32, Int32}(A0)
+                hA = copy(A0)
+                returned = device_case(dA)
+                host_case(hA)
+                @test returned === dA
+                @test dA isa F{Float32, Int32}
+                @test exact_equal(hA, SparseMatrixCSC(dA))
+            end
         end
 
         @testset "device libm accuracy assumption" begin
