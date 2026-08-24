@@ -20,8 +20,10 @@ Pkg.develop(url = "https://github.com/jeremyiwk/MetalSparseArrays.jl")
 using MetalSparseArrays
 ```
 
-An Apple Silicon GPU is required for device operations; the test suite and the
-CPU-side conversions run anywhere.
+An Apple Silicon GPU is required for device operations. The test suite runs
+anywhere for local development — device test sets are skipped without a GPU —
+but merges are gated on CI runs where a Metal device is required to be present
+and exercised, so no functionality lands unverified on device.
 
 ## Device constraints
 

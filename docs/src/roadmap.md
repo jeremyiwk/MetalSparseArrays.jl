@@ -55,9 +55,10 @@ does not provide. Both remain available by converting to the CPU.
 ## Phase 0 — Foundations *(complete)*
 
 Package scaffolding, the test harness that validates every device result against the
-`SparseArrays` result for the same input, and the conventions for tolerances,
-reproducibility, and skipping device test sets on machines without a GPU. Element
-types are discovered by probing the device.
+`SparseArrays` result for the same input, and the conventions for tolerances and
+reproducibility. Device test sets are skipped on machines without a GPU for local
+convenience only: CI requires the device (`CI_EXPECT_DEVICE`), so nothing merges
+unverified on Metal. Element types are discovered by probing the device.
 
 ## Phase 1 — Storage formats
 

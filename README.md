@@ -10,6 +10,6 @@ Sparse arrays for the Apple Silicon GPU backend. Code written against `SparseArr
 
 Documentation: [jeremyiwk.github.io/MetalSparseArrays.jl/dev](https://jeremyiwk.github.io/MetalSparseArrays.jl/dev/)
 
-Supported Julia versions: 1.10 (current LTS) and later. Device operations require Apple Silicon; the test suite runs anywhere.
+Supported Julia versions: 1.10 (current LTS) and later. Device operations require Apple Silicon. The test suite runs anywhere for local development (device test sets are skipped without a GPU), but merges are gated on CI runs where a Metal device is required to be present and exercised — functionality is never merged unverified on device.
 
 Contributions follow the [ColPrac](https://github.com/SciML/ColPrac) contributor guide.
