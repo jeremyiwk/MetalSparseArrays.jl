@@ -27,5 +27,6 @@ include("common.jl")
 include("csr.jl")
 include("csc.jl")
 include("coo.jl")
+include("conversions.jl")
 
 end # module

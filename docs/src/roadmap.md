@@ -60,7 +60,7 @@ reproducibility. Device test sets are skipped on machines without a GPU for loca
 convenience only: CI requires the device (`CI_EXPECT_DEVICE`), so nothing merges
 unverified on Metal. Element types are discovered by probing the device.
 
-## Phase 1 — Storage formats *(in progress: CSR, CSC, and COO shipped)*
+## Phase 1 — Storage formats *(in progress: formats and interconversions shipped; dense conversions and BSR remain)*
 
 **Deliverables**
 

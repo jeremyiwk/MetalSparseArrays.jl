@@ -66,16 +66,3 @@ end
 function MtlSparseMatrixCSR(A::SparseMatrixCSC{Tv}) where {Tv}
     return MtlSparseMatrixCSR{Tv, DEFAULT_INDEX_TYPE}(A)
 end
-
-"""
-    SparseMatrixCSC(A::MtlSparseMatrixCSR{Tv, Ti}) -> SparseMatrixCSC{Tv, Ti}
-
-The host CSC matrix equal to `A`. The conversion is exact: the sparsity pattern,
-the ordering of the index arrays, and every stored value (zeros included) are
-reproduced, so converting a `SparseMatrixCSC` to the device and back is the
-identity up to the index type.
-"""
-function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
-    At = SparseMatrixCSC(A.n, A.m, Array(A.rowptr), Array(A.colval), Array(A.nzval))
-    return sparse(transpose(At))
-end

@@ -65,28 +65,3 @@ end
 function MtlSparseMatrixCSC(A::SparseMatrixCSC{Tv}) where {Tv}
     return MtlSparseMatrixCSC{Tv, DEFAULT_INDEX_TYPE}(A)
 end
-
-"""
-    SparseMatrixCSC(A::MtlSparseMatrixCSC{Tv, Ti}) -> SparseMatrixCSC{Tv, Ti}
-
-The host CSC matrix equal to `A`: the three storage arrays copied to the host
-unchanged. The conversion is exact, so converting a `SparseMatrixCSC` to the
-device and back is the identity up to the index type.
-"""
-function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
-    return SparseMatrixCSC(A.m, A.n, Array(A.colptr), Array(A.rowval), Array(A.nzval))
-end
-
-"""
-    Adapt.adapt_storage(::Type{MtlArray}, A::SparseMatrixCSC)
-
-`adapt(MtlArray, A)` transfers a host `SparseMatrixCSC` to the device as an
-[`MtlSparseMatrixCSC`](@ref) with index type [`DEFAULT_INDEX_TYPE`](@ref),
-preserving the storage format, exactly as `CUDA.CUSPARSE` adapts to `CuArray`.
-
-This method is deliberate type piracy — both `MtlArray` and `SparseMatrixCSC`
-are owned by other packages — committed knowingly on the `CUSPARSE` precedent
-and excepted in the Aqua piracy check; it is the one pirated method this package
-defines.
-"""
-Adapt.adapt_storage(::Type{MtlArray}, A::SparseMatrixCSC) = MtlSparseMatrixCSC(A)

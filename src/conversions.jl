@@ -1,0 +1,135 @@
+# Conversions between the device formats. COO and CSR share row-major entry
+# order, so those two conversions copy index and value arrays on the device and
+# touch the host only for the pointer array; every conversion involving CSC
+# reorders entries and currently goes through the host SparseMatrixCSC fallback
+# (see each docstring). Conversions always copy: mutating the source never
+# changes the result, matching CUSPARSE.
+
+"""
+    MtlSparseMatrixCSR(A::MtlSparseMatrixCOO)
+
+Convert to CSR. Both formats store entries in row-major order, so the column
+index and value arrays are copied on the device and only the row pointer is
+built on the host from an `O(nnz)` transfer of the row indices; no value
+touches the host. The `(i, j, v)` triple set is preserved exactly.
+"""
+function MtlSparseMatrixCSR(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
+    nnz(A) + 1 <= typemax(Ti) ||
+        throw(ArgumentError("$(nnz(A)) stored entries do not fit a pointer array in Ti = $Ti"))
+    counts = zeros(Int, A.m + 1)
+    counts[1] = 1
+    for i in Array(A.rowval)
+        counts[i + 1] += 1
+    end
+    rowptr = MtlVector{Ti}(convert(Vector{Ti}, cumsum(counts)))
+    return MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, rowptr, copy(A.colval), copy(A.nzval))
+end
+
+"""
+    MtlSparseMatrixCSR(A::MtlSparseMatrixCSC)
+
+Convert to CSR. This reorders every entry from column-major to row-major, and
+is currently computed through the host `SparseMatrixCSC` fallback (a full
+transfer each way); a device reorder kernel is planned with the Phase 3 kernel
+infrastructure. The `(i, j, v)` triple set is preserved exactly.
+"""
+function MtlSparseMatrixCSR(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
+    return MtlSparseMatrixCSR{Tv, Ti}(SparseMatrixCSC(A))
+end
+
+"""
+    SparseMatrixCSC(A::MtlSparseMatrixCSR{Tv, Ti}) -> SparseMatrixCSC{Tv, Ti}
+
+The host CSC matrix equal to `A`. The conversion is exact: the sparsity pattern,
+the ordering of the index arrays, and every stored value (zeros included) are
+reproduced, so converting a `SparseMatrixCSC` to the device and back is the
+identity up to the index type.
+"""
+function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
+    At = SparseMatrixCSC(A.n, A.m, Array(A.rowptr), Array(A.colval), Array(A.nzval))
+    return sparse(transpose(At))
+end
+
+"""
+    MtlSparseMatrixCSC(A::MtlSparseMatrixCSR)
+    MtlSparseMatrixCSC(A::MtlSparseMatrixCOO)
+
+Convert to CSC. Both reorder every entry from row-major to column-major, and
+are currently computed through the host `SparseMatrixCSC` fallback (a full
+transfer each way); a device reorder kernel is planned with the Phase 3 kernel
+infrastructure. The `(i, j, v)` triple set is preserved exactly.
+"""
+function MtlSparseMatrixCSC(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
+    return MtlSparseMatrixCSC{Tv, Ti}(SparseMatrixCSC(A))
+end
+
+function MtlSparseMatrixCSC(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
+    return MtlSparseMatrixCSC{Tv, Ti}(SparseMatrixCSC(A))
+end
+
+"""
+    SparseMatrixCSC(A::MtlSparseMatrixCSC{Tv, Ti}) -> SparseMatrixCSC{Tv, Ti}
+
+The host CSC matrix equal to `A`: the three storage arrays copied to the host
+unchanged. The conversion is exact, so converting a `SparseMatrixCSC` to the
+device and back is the identity up to the index type.
+"""
+function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
+    return SparseMatrixCSC(A.m, A.n, Array(A.colptr), Array(A.rowval), Array(A.nzval))
+end
+
+"""
+    Adapt.adapt_storage(::Type{MtlArray}, A::SparseMatrixCSC)
+
+`adapt(MtlArray, A)` transfers a host `SparseMatrixCSC` to the device as an
+[`MtlSparseMatrixCSC`](@ref) with index type [`DEFAULT_INDEX_TYPE`](@ref),
+preserving the storage format, exactly as `CUDA.CUSPARSE` adapts to `CuArray`.
+
+This method is deliberate type piracy — both `MtlArray` and `SparseMatrixCSC`
+are owned by other packages — committed knowingly on the `CUSPARSE` precedent
+and excepted in the Aqua piracy check; it is the one pirated method this package
+defines.
+"""
+Adapt.adapt_storage(::Type{MtlArray}, A::SparseMatrixCSC) = MtlSparseMatrixCSC(A)
+
+"""
+    MtlSparseMatrixCOO(A::MtlSparseMatrixCSR)
+
+Convert to COO. Both formats store entries in row-major order, so the column
+index and value arrays are copied on the device and the row indices are
+expanded on the host from an `O(m)` transfer of the row pointer; no value
+touches the host. The `(i, j, v)` triple set is preserved exactly.
+"""
+function MtlSparseMatrixCOO(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
+    ptr = Array(A.rowptr)
+    rowhost = Vector{Ti}(undef, nnz(A))
+    for i in 1:A.m, k in ptr[i]:(ptr[i + 1] - 1)
+        rowhost[k] = Ti(i)
+    end
+    rowval = MtlVector{Ti}(rowhost)
+    return MtlSparseMatrixCOO{Tv, Ti}(A.m, A.n, rowval, copy(A.colval), copy(A.nzval))
+end
+
+"""
+    MtlSparseMatrixCOO(A::MtlSparseMatrixCSC)
+
+Convert to COO. This reorders every entry from column-major to the row-major
+order COO stores, and is currently computed through the host `SparseMatrixCSC`
+fallback (a full transfer each way); a device reorder kernel is planned with
+the Phase 3 kernel infrastructure. The `(i, j, v)` triple set is preserved
+exactly.
+"""
+function MtlSparseMatrixCOO(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
+    return MtlSparseMatrixCOO{Tv, Ti}(SparseMatrixCSC(A))
+end
+
+"""
+    SparseMatrixCSC(A::MtlSparseMatrixCOO{Tv, Ti}) -> SparseMatrixCSC{Tv, Ti}
+
+The host CSC matrix equal to `A`, assembled with `sparse(I, J, V, m, n)` from
+host copies of the coordinate arrays. Under the format's no-duplicates
+invariant the conversion is exact, stored zeros included.
+"""
+function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
+    return sparse(Array(A.rowval), Array(A.colval), Array(A.nzval), A.m, A.n)
+end

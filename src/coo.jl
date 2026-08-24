@@ -82,14 +82,3 @@ end
 function MtlSparseMatrixCOO(A::SparseMatrixCSC{Tv}) where {Tv}
     return MtlSparseMatrixCOO{Tv, DEFAULT_INDEX_TYPE}(A)
 end
-
-"""
-    SparseMatrixCSC(A::MtlSparseMatrixCOO{Tv, Ti}) -> SparseMatrixCSC{Tv, Ti}
-
-The host CSC matrix equal to `A`, assembled with `sparse(I, J, V, m, n)` from
-host copies of the coordinate arrays. Under the format's no-duplicates
-invariant the conversion is exact, stored zeros included.
-"""
-function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
-    return sparse(Array(A.rowval), Array(A.colval), Array(A.nzval), A.m, A.n)
-end
