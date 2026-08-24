@@ -136,7 +136,7 @@ end
 
 # `as_coo` and `as_csr` give every format a view of itself in the named
 # format, for the dense scatter below and the row-major merge in
-# `src/kernels/mergebroadcast.jl`; same-format is the identity, no copy.
+# `src/kernels/merge_broadcast.jl`; same-format is the identity, no copy.
 # `as_csc` sits with its caller in `interface.jl`.
 as_coo(A::MtlSparseMatrixCOO) = A
 as_coo(A::AbstractMtlSparseMatrix) = MtlSparseMatrixCOO(A)

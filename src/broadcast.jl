@@ -7,7 +7,7 @@
 # container and stores every entry; the dense container is the CUSPARSE
 # convention, adopted by the roadmap.) Sparse-sparse broadcast keeps the union
 # pattern, matching SparseArrays exactly, computed by the device pattern merge
-# in src/kernels/mergebroadcast.jl where it applies and by the host fallback
+# in src/kernels/merge_broadcast.jl where it applies and by the host fallback
 # below otherwise (Metal.MPS has no sparse primitive — surveyed).
 # In-place `A .= rhs` follows SparseArrays semantics by running the stdlib
 # broadcast on a host mirror and rebinding the destination's storage arrays.

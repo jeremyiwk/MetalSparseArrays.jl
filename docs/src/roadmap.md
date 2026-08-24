@@ -113,7 +113,7 @@ unverified on Metal. Element types are discovered by probing the device.
   every entry). Sparse-sparse broadcast matches `SparseArrays` exactly — the
   union of the two patterns with the function evaluated at every union
   position and every numerically zero result dropped — computed by the device
-  pattern-merge kernel in `src/kernels/mergebroadcast.jl`, the first
+  pattern-merge kernel in `src/kernels/merge_broadcast.jl`, the first
   hand-written kernel (`Metal.MPS` was surveyed and wraps no sparse
   primitive). In-place `A .= ...` follows `SparseArrays` semantics.
 - COO assembly: `sortperm` on `(j, i)`, duplicate accumulation with `+`,

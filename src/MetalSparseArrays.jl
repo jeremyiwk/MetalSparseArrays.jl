@@ -30,6 +30,6 @@ include("coo.jl")
 include("conversions.jl")
 include("interface.jl")
 include("broadcast.jl")
-include("kernels/mergebroadcast.jl")
+include("kernels/merge_broadcast.jl")
 
 end # module
