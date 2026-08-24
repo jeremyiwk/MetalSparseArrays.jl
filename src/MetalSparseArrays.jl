@@ -16,7 +16,7 @@ module MetalSparseArrays
 
 using Adapt: Adapt
 using LinearAlgebra: LinearAlgebra
-using Metal: Metal, MtlArray, MtlVector
+using Metal: Metal, MtlArray, MtlMatrix, MtlVector
 using SparseArrays: SparseArrays, AbstractSparseArray, AbstractSparseMatrix,
     SparseMatrixCSC, nnz, sparse
 

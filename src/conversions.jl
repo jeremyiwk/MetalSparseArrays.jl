@@ -133,3 +133,53 @@ invariant the conversion is exact, stored zeros included.
 function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
     return sparse(Array(A.rowval), Array(A.colval), Array(A.nzval), A.m, A.n)
 end
+
+# `as_coo` gives every format a COO view of itself for the dense scatter below;
+# same-format is the identity, no copy.
+as_coo(A::MtlSparseMatrixCOO) = A
+as_coo(A::AbstractMtlSparseMatrix) = MtlSparseMatrixCOO(A)
+
+"""
+    Array(A::AbstractMtlSparseMatrix{Tv}) -> Matrix{Tv}
+
+The dense host matrix equal to `A`, agreeing with `Array(::SparseMatrixCSC)`:
+every stored value is written (stored zeros included, indistinguishably), every
+other entry is zero.
+"""
+Base.Array(A::AbstractMtlSparseMatrix) = Array(SparseMatrixCSC(A))
+
+"""
+    MtlMatrix(A::AbstractMtlSparseMatrix{Tv}) -> MtlMatrix{Tv}
+
+The dense device matrix equal to `A`, computed on the device by scattering the
+coordinate triples into a zeroed matrix; values do not pass through the host.
+Linear indices are computed in `Int`, so `(j - 1) * m + i` cannot overflow the
+index type. Agrees with `Array(::SparseMatrixCSC)` moved to the device.
+"""
+function Metal.MtlMatrix(A::AbstractMtlSparseMatrix{Tv}) where {Tv}
+    coo = as_coo(A)
+    D = Metal.zeros(Tv, A.m, A.n)
+    if !isempty(coo.nzval)
+        linear = (Int.(coo.colval) .- 1) .* A.m .+ Int.(coo.rowval)
+        D[linear] = coo.nzval
+    end
+    return D
+end
+
+"""
+    MtlSparseMatrixCSC(D::Union{Matrix, MtlMatrix})
+    MtlSparseMatrixCSR(D::Union{Matrix, MtlMatrix})
+    MtlSparseMatrixCOO(D::Union{Matrix, MtlMatrix})
+
+Sparsify a dense host or device matrix into the named device format, with the
+semantics of `sparse(::Matrix)`: numerical zeros are dropped, everything else
+(nonfinite values included) becomes a stored entry. Currently computed through
+host `sparse` (a device matrix is first copied to the host); the index type is
+[`DEFAULT_INDEX_TYPE`](@ref).
+"""
+MtlSparseMatrixCSC(D::Matrix) = MtlSparseMatrixCSC(sparse(D))
+MtlSparseMatrixCSC(D::MtlMatrix) = MtlSparseMatrixCSC(sparse(Array(D)))
+MtlSparseMatrixCSR(D::Matrix) = MtlSparseMatrixCSR(sparse(D))
+MtlSparseMatrixCSR(D::MtlMatrix) = MtlSparseMatrixCSR(sparse(Array(D)))
+MtlSparseMatrixCOO(D::Matrix) = MtlSparseMatrixCOO(sparse(D))
+MtlSparseMatrixCOO(D::MtlMatrix) = MtlSparseMatrixCOO(sparse(Array(D)))
