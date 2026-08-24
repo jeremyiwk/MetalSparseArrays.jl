@@ -25,9 +25,21 @@ These apply to every phase rather than being phases themselves:
   feature, never retroactively. Every gate below runs for every format it applies
   to, every supported element type, both index types (`Int32`, `Int64`), and with
   `Metal.allowscalar(false)` in force.
+- **Identities are asserted over the corpus, not a draw.** Algebraic invariances
+  (`(αA)x = α(Ax)`, `(A + B)x = Ax + Bx`, adjoint consistency
+  `⟨Ax, y⟩ = ⟨x, Aᴴy⟩`, transpose round trips) run over all test seeds, densities,
+  and the adversarial patterns of the phase — a single random pattern
+  demonstrates nothing about contention or accumulation-order bugs.
+- **Nonfinite values follow `SparseArrays`:** stored `NaN`/`Inf` are legal,
+  participate in arithmetic, and propagate; no operation checks for them. Tests
+  include patterns with nonfinite stored values and assert reference-matching
+  propagation.
 - **Benchmarks land with the feature**, keyed by representation, format, element
   type, and size.
 - **Docs land with the feature.**
+- **Regression corpus** (a convention, not part of the gates): every bug that
+  escapes to a reported failure gets its minimal reproducer pinned as a
+  permanent named test.
 - **Shape and pattern edge cases are part of every gate:** the empty matrix, a
   matrix with `nnz = 0`, fully dense stored patterns, a single stored entry,
   empty rows and columns, and stored entries whose value is zero (structural

@@ -12,6 +12,7 @@ makedocs(
         "Home" => "index.md",
         "Roadmap" => "roadmap.md",
         "API reference" => "api.md",
+        "Changelog" => "changelog.md",
     ],
 )
 

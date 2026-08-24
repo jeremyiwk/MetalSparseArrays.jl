@@ -6,6 +6,7 @@ using LinearAlgebra
 using Metal
 using Random
 using SparseArrays
+using StableRNGs
 using Test
 
 const BFloat16 = Metal.BFloat16
@@ -17,6 +18,16 @@ Whether a Metal device is present and usable. Test sets that require a device ar
 skipped when this is `false`, so the suite still runs on machines without one.
 """
 const DEVICE_AVAILABLE = Metal.functional()
+
+# Guard against silently reduced coverage: an environment that promises a device
+# (CI on Apple Silicon runners) fails loudly if none is found, instead of green
+# runs that quietly skipped every device test set.
+if get(ENV, "CI_EXPECT_DEVICE", "") == "true" && !DEVICE_AVAILABLE
+    error(
+        "CI_EXPECT_DEVICE=true but Metal.functional() is false: the device test " *
+            "sets would be skipped. Fix the runner or unset CI_EXPECT_DEVICE."
+    )
+end
 
 """
     CANDIDATE_ELEMENT_TYPES
@@ -61,6 +72,10 @@ suite as soon as the backend accepts it.
 """
 const ELEMENT_TYPES = DEVICE_AVAILABLE ? supported_element_types(MtlArray) :
     collect(CANDIDATE_ELEMENT_TYPES)
+
+# Make the exercised configuration visible in every test log, so a coverage
+# regression (a type silently dropping out of the probed set) is observable.
+@info "MetalSparseArrays test configuration" DEVICE_AVAILABLE ELEMENT_TYPES INDEX_TYPES
 
 """
     INDEX_TYPES
@@ -117,7 +132,7 @@ function testsparse(
         ::Type{Tv}, ::Type{Ti}, m::Integer, n::Integer;
         density = 0.1, seed = 0
     ) where {Tv, Ti}
-    rng = MersenneTwister(seed)
+    rng = StableRNG(seed)
     A = sprand(rng, referencetype(Tv), m, n, density)
     nonzeros(A) .= uniform(rng, referencetype(Tv), nnz(A))
     return SparseMatrixCSC{Tv, Ti}(A)
