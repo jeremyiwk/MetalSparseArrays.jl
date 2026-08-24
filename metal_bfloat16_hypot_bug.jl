@@ -22,6 +22,21 @@
 # (`CallAnalyzer::analyze`, reached from GPUCompiler's Metal optimization
 # pipeline, GPUCompiler/src/metal.jl `optimize_module!`) — a fatal crash, not a
 # catchable exception.
+#
+# Root cause (Metal.jl side): src/device/intrinsics/math.jl registers device
+# overrides for Float16 and Float32 but none for BFloat16. In particular it
+# already contains a device-safe `_hypot` ("hypot without use of double",
+# line ~323) registered only as `@device_override Base.hypot(::Float32,
+# ::Float32)`; BFloat16 falls through to Base's generic hypot, which reaches
+# Float64. Registering the existing `_hypot` for BFloat16 (or promoting to
+# Float32) should fix both manifestations. The same gap affects other
+# functions: on device BFloat16 arrays, `fma`, two-argument `atan`, `cbrt`,
+# and `mod` also fail to compile, while `+ * / muladd sqrt abs exp log sin
+# cos tanh expm1 round` work (they route through BFloat16s.jl's
+# promote-to-Float32 paths onto the covered Float32 intrinsics).
+#
+# Independent of the coverage gap, the segfault itself is a compiler bug:
+# invalid IR should produce InvalidIRError, never a process crash.
 
 using Metal
 
