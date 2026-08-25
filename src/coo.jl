@@ -36,6 +36,15 @@ mutable struct MtlSparseMatrixCOO{Tv, Ti <: Integer} <: AbstractMtlSparseMatrix{
         coo_check(m, n, rowval, colval, nzval)
         return new{Tv, Ti}(m, n, rowval, colval, nzval)
     end
+
+    # Unchecked construction, for arrays a kernel guarantees by construction;
+    # see the docstring of `Unchecked` in common.jl.
+    function MtlSparseMatrixCOO{Tv, Ti}(
+            ::Unchecked, m::Integer, n::Integer, rowval::MtlVector{Ti},
+            colval::MtlVector{Ti}, nzval::MtlVector{Tv}
+        ) where {Tv, Ti <: Integer}
+        return new{Tv, Ti}(m, n, rowval, colval, nzval)
+    end
 end
 
 function MtlSparseMatrixCOO(

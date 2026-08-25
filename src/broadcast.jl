@@ -35,11 +35,11 @@ MtlSparseStyle(::Val{2}) = MtlSparseStyle()
 Base.BroadcastStyle(s::MtlSparseStyle, ::Metal.MtlArrayStyle) = s
 
 with_nzval(A::MtlSparseMatrixCSC{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
-    MtlSparseMatrixCSC{Tv, Ti}(A.m, A.n, copy(A.colptr), copy(A.rowval), nzval)
+    MtlSparseMatrixCSC{Tv, Ti}(A.m, A.n, device_copy(A.colptr), device_copy(A.rowval), nzval)
 with_nzval(A::MtlSparseMatrixCSR{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
-    MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, copy(A.rowptr), copy(A.colval), nzval)
+    MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, device_copy(A.rowptr), device_copy(A.colval), nzval)
 with_nzval(A::MtlSparseMatrixCOO{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
-    MtlSparseMatrixCOO{Tv, Ti}(A.m, A.n, copy(A.rowval), copy(A.colval), nzval)
+    MtlSparseMatrixCOO{Tv, Ti}(A.m, A.n, device_copy(A.rowval), device_copy(A.colval), nzval)
 
 scalar_value(a) = a
 scalar_value(a::Base.RefValue) = a[]

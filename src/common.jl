@@ -97,6 +97,19 @@ function index_range_check(idx::MtlVector{Ti}, bound::Integer, name::String) whe
 end
 
 """
+    device_copy(v::MtlVector)
+
+A copy of `v` computed by an identity broadcast on the device. `Base.copy` on
+an `MtlArray` synchronizes the whole queue and then copies on the host
+(`Metal.jl`'s GPU-to-GPU `unsafe_copyto!` is a raw memcpy that must not
+overlap pending kernels), costing on the order of 100 us per call; the
+broadcast stays on the device, is ordered after previously launched kernels,
+and returns without waiting. Used wherever library code copies a storage
+array.
+"""
+device_copy(v::MtlVector) = identity.(v)
+
+"""
     Unchecked
 
 Internal sentinel whose singleton `unchecked` selects the format inner

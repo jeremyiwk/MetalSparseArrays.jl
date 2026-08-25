@@ -16,7 +16,11 @@ module MetalSparseArrays
 
 using Adapt: Adapt
 using LinearAlgebra: LinearAlgebra
-using Metal: Metal, MtlArray, MtlMatrix, MtlVector, thread_position_in_grid
+using Metal: Metal, MtlArray, MtlMatrix, MtlVector, MtlThreadGroupArray,
+    MemoryFlagThreadGroup, simd_shuffle_up, simdgroup_index_in_threadgroup,
+    simdgroups_per_threadgroup, thread_index_in_simdgroup, thread_position_in_grid,
+    thread_position_in_threadgroup, threadgroup_barrier, threadgroup_position_in_grid,
+    threads_per_simdgroup, threads_per_threadgroup
 using SparseArrays: SparseArrays, AbstractSparseArray, AbstractSparseMatrix,
     SparseMatrixCSC, nnz, sparse
 
@@ -30,6 +34,8 @@ include("coo.jl")
 include("conversions.jl")
 include("interface.jl")
 include("broadcast.jl")
+include("kernels/scan.jl")
 include("kernels/merge_broadcast.jl")
+include("kernels/conversions.jl")
 
 end # module

@@ -1,28 +1,31 @@
 # Conversions between the device formats. COO and CSR share row-major entry
-# order, so those two conversions copy index and value arrays on the device and
-# touch the host only for the pointer array; every conversion involving CSC
-# reorders entries and currently goes through the host SparseMatrixCSC fallback
-# (see each docstring). Conversions always copy: mutating the source never
-# changes the result, matching CUSPARSE.
+# order, so those two conversions run entirely on the device (the kernels live
+# in src/kernels/conversions.jl); every conversion involving CSC reorders
+# entries and currently goes through the host SparseMatrixCSC fallback (see
+# each docstring). Conversions always copy: mutating the source never changes
+# the result, matching CUSPARSE.
 
 """
     MtlSparseMatrixCSR(A::MtlSparseMatrixCOO)
 
 Convert to CSR. Both formats store entries in row-major order, so the column
-index and value arrays are copied on the device and only the row pointer is
-built on the host from an `O(nnz)` transfer of the row indices; no value
-touches the host. The `(i, j, v)` triple set is preserved exactly.
+index and value arrays are copied on the device and the row pointer is built
+on the device by one binary search per row over the sorted row indices
+(`src/kernels/conversions.jl`); nothing touches the host. The conversion is
+asynchronous and deterministic, and the `(i, j, v)` triple set is preserved
+exactly.
 """
 function MtlSparseMatrixCSR(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
     nnz(A) + 1 <= typemax(Ti) ||
         throw(ArgumentError("$(nnz(A)) stored entries do not fit a pointer array in Ti = $Ti"))
-    counts = zeros(Int, A.m + 1)
-    counts[1] = 1
-    for i in Array(A.rowval)
-        counts[i + 1] += 1
-    end
-    rowptr = MtlVector{Ti}(convert(Vector{Ti}, cumsum(counts)))
-    return MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, rowptr, copy(A.colval), copy(A.nzval))
+    rowptr = MtlVector{Ti}(undef, A.m + 1)
+    kernel = Metal.@metal launch = false contract_idx_kernel!(
+        rowptr, A.rowval, A.m, nnz(A)
+    )
+    launch_per_slice(kernel, A.m + 1, rowptr, A.rowval, A.m, nnz(A))
+    return MtlSparseMatrixCSR{Tv, Ti}(
+        unchecked, A.m, A.n, rowptr, device_copy(A.colval), device_copy(A.nzval)
+    )
 end
 
 """
@@ -97,17 +100,20 @@ Adapt.adapt_storage(::Type{MtlArray}, A::SparseMatrixCSC) = MtlSparseMatrixCSC(A
 
 Convert to COO. Both formats store entries in row-major order, so the column
 index and value arrays are copied on the device and the row indices are
-expanded on the host from an `O(m)` transfer of the row pointer; no value
-touches the host. The `(i, j, v)` triple set is preserved exactly.
+expanded on the device, one thread per row writing its index over its pointer
+range (`src/kernels/conversions.jl`); nothing touches the host. The
+conversion is asynchronous and deterministic, and the `(i, j, v)` triple set
+is preserved exactly.
 """
 function MtlSparseMatrixCOO(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
-    ptr = Array(A.rowptr)
-    rowhost = Vector{Ti}(undef, nnz(A))
-    for i in 1:A.m, k in ptr[i]:(ptr[i + 1] - 1)
-        rowhost[k] = Ti(i)
+    rowval = MtlVector{Ti}(undef, nnz(A))
+    if A.m > 0 && nnz(A) > 0
+        kernel = Metal.@metal launch = false expand_ptr_kernel!(rowval, A.rowptr, A.m)
+        launch_per_slice(kernel, A.m, rowval, A.rowptr, A.m)
     end
-    rowval = MtlVector{Ti}(rowhost)
-    return MtlSparseMatrixCOO{Tv, Ti}(A.m, A.n, rowval, copy(A.colval), copy(A.nzval))
+    return MtlSparseMatrixCOO{Tv, Ti}(
+        unchecked, A.m, A.n, rowval, device_copy(A.colval), device_copy(A.nzval)
+    )
 end
 
 """

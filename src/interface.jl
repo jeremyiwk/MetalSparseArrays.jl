@@ -14,17 +14,17 @@ entries) matrix of the same format with the requested dimensions.
 """
 function Base.similar(A::MtlSparseMatrixCSC{<:Any, Ti}, ::Type{Tv}) where {Tv, Ti}
     nzval = MtlVector{Tv}(undef, nnz(A))
-    return MtlSparseMatrixCSC{Tv, Ti}(A.m, A.n, copy(A.colptr), copy(A.rowval), nzval)
+    return MtlSparseMatrixCSC{Tv, Ti}(A.m, A.n, device_copy(A.colptr), device_copy(A.rowval), nzval)
 end
 
 function Base.similar(A::MtlSparseMatrixCSR{<:Any, Ti}, ::Type{Tv}) where {Tv, Ti}
     nzval = MtlVector{Tv}(undef, nnz(A))
-    return MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, copy(A.rowptr), copy(A.colval), nzval)
+    return MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, device_copy(A.rowptr), device_copy(A.colval), nzval)
 end
 
 function Base.similar(A::MtlSparseMatrixCOO{<:Any, Ti}, ::Type{Tv}) where {Tv, Ti}
     nzval = MtlVector{Tv}(undef, nnz(A))
-    return MtlSparseMatrixCOO{Tv, Ti}(A.m, A.n, copy(A.rowval), copy(A.colval), nzval)
+    return MtlSparseMatrixCOO{Tv, Ti}(A.m, A.n, device_copy(A.rowval), device_copy(A.colval), nzval)
 end
 
 Base.similar(A::AbstractMtlSparseMatrix{Tv}) where {Tv} = similar(A, Tv)
@@ -67,19 +67,19 @@ end
 
 function Base.copy(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
     return MtlSparseMatrixCSC{Tv, Ti}(
-        A.m, A.n, copy(A.colptr), copy(A.rowval), copy(A.nzval)
+        A.m, A.n, device_copy(A.colptr), device_copy(A.rowval), device_copy(A.nzval)
     )
 end
 
 function Base.copy(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
     return MtlSparseMatrixCSR{Tv, Ti}(
-        A.m, A.n, copy(A.rowptr), copy(A.colval), copy(A.nzval)
+        A.m, A.n, device_copy(A.rowptr), device_copy(A.colval), device_copy(A.nzval)
     )
 end
 
 function Base.copy(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
     return MtlSparseMatrixCOO{Tv, Ti}(
-        A.m, A.n, copy(A.rowval), copy(A.colval), copy(A.nzval)
+        A.m, A.n, device_copy(A.rowval), device_copy(A.colval), device_copy(A.nzval)
     )
 end
 
@@ -108,7 +108,7 @@ function SparseArrays.findnz(A::AbstractMtlSparseMatrix{Tv, Ti}) where {Tv, Ti}
     for j in 1:csc.n, k in ptr[j]:(ptr[j + 1] - 1)
         colhost[k] = Ti(j)
     end
-    return (copy(csc.rowval), MtlVector{Ti}(colhost), copy(csc.nzval))
+    return (device_copy(csc.rowval), MtlVector{Ti}(colhost), device_copy(csc.nzval))
 end
 
 as_csc(A::MtlSparseMatrixCSC) = A

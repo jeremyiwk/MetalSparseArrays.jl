@@ -141,9 +141,10 @@ the formats document — and the result satisfies the same invariant, so the
 output arrays are valid for unchecked construction.
 
 Two device passes with a scan between them: a count kernel sizes each slice of
-the result (evaluating `g`, because computed zeros are dropped), `accumulate!`
-turns the counts into `ptrC`, and a fill kernel writes each slice at its
-offset. `g` is evaluated twice per union position, once per pass; the
+the result (evaluating `g`, because computed zeros are dropped),
+[`ptr_scan!`](@ref) turns the counts into `ptrC`, and a fill kernel writes
+each slice at its offset. `g` is evaluated twice per union position, once per
+pass; the
 alternative, materializing uncompacted values, would cost union-sized device
 buffers. No atomics are involved and each thread writes a disjoint output
 range, so repeated calls on the same input are bit-identical. The host reads
@@ -157,14 +158,15 @@ function merge_compressed(
     ) where {Ti <: Integer}
     Tv = Base.promote_op(g, eltype(valA), eltype(valB))
     ptrC = MtlVector{Ti}(undef, major + 1)
-    fill!(view(ptrC, 1:1), one(Ti))
     if major > 0
         counts = MtlVector{Ti}(undef, major)
         kernel = Metal.@metal launch = false merge_count_kernel!(
             counts, g, ptrA, idxA, valA, ptrB, idxB, valB, major
         )
         launch_per_slice(kernel, major, counts, g, ptrA, idxA, valA, ptrB, idxB, valB, major)
-        accumulate!(+, view(ptrC, 2:(major + 1)), counts; init = one(Ti))
+        ptr_scan!(ptrC, counts, one(Ti))
+    else
+        fill!(view(ptrC, 1:1), one(Ti))
     end
     stored = Int(Array(view(ptrC, (major + 1):(major + 1)))[1]) - 1
     idxC = MtlVector{Ti}(undef, stored)

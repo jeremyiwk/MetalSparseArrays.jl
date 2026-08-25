@@ -143,6 +143,21 @@
             end
         end
 
+        # The CSR <-> COO conversion kernels launch one thread per row (plus
+        # one for the closing pointer entry), so row counts at and around the
+        # threadgroup boundaries need explicit coverage; the pattern corpus in
+        # test_conversions.jl covers the structural cases at small sizes.
+        @testset "conversion kernels at threadgroup boundary sizes" begin
+            Tv = Float32
+            for m in (1023, 1024, 1025), density in (0.0, 0.02)
+                A = testsparse(Tv, Int, m, 7; density, seed = m)
+                dR = MtlSparseMatrixCSR{Tv, Int32}(A)
+                dC = MtlSparseMatrixCOO{Tv, Int32}(A)
+                @test exact_equal(A, SparseMatrixCSC(MtlSparseMatrixCOO(dR)))
+                @test exact_equal(A, SparseMatrixCSC(MtlSparseMatrixCSR(dC)))
+            end
+        end
+
         @testset "host fallback retained and reachable" begin
             Tv = Float32
             A = testsparse(Tv, Int, 9, 7; density = 0.3, seed = 90)
