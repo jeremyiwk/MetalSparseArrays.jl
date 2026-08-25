@@ -62,6 +62,28 @@
             end
         end
 
+        # A compressed merge result carries bound-sized buffers with the tail
+        # unspecified (as SparseMatrixCSC allows); every operation must ignore
+        # the tail, nnz must report the stored count, and copy must compact.
+        @testset "merge result buffers are oversized and ignored $F" for F in
+            (MtlSparseMatrixCSR, MtlSparseMatrixCSC)
+
+            Tv = Float32
+            A = testsparse(Tv, Int, 25, 25; density = 0.2, seed = 45)
+            B = testsparse(Tv, Int, 25, 25; density = 0.2, seed = 46)
+            dC = broadcast(+, F{Tv, Int32}(A), F{Tv, Int32}(B))
+            host = A .+ B
+            @test nnz(dC) == nnz(host)
+            @test length(nonzeros(dC)) == nnz(A) + nnz(B)
+            # Further operations on the oversized result stay exact.
+            @test exact_equal(host .* Tv(2), SparseMatrixCSC(dC .* Tv(2)))
+            @test exact_equal(host .- host, SparseMatrixCSC(dC .- dC))
+            @test exact_equal(host, SparseMatrixCSC(MtlSparseMatrixCOO(dC)))
+            compact = copy(dC)
+            @test length(nonzeros(compact)) == nnz(host)
+            @test exact_equal(host, SparseMatrixCSC(compact))
+        end
+
         @testset "cancellation drops entries as SparseArrays does $F" for F in SPARSE_TYPES
             Tv = Float32
             A = testsparse(Tv, Int, 30, 30; density = 0.3, seed = 40)

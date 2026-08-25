@@ -14,12 +14,14 @@ entries) matrix of the same format with the requested dimensions.
 """
 function Base.similar(A::MtlSparseMatrixCSC{<:Any, Ti}, ::Type{Tv}) where {Tv, Ti}
     nzval = MtlVector{Tv}(undef, nnz(A))
-    return MtlSparseMatrixCSC{Tv, Ti}(A.m, A.n, device_copy(A.colptr), device_copy(A.rowval), nzval)
+    rowval = device_copy(view(A.rowval, 1:nnz(A)))
+    return MtlSparseMatrixCSC{Tv, Ti}(A.m, A.n, device_copy(A.colptr), rowval, nzval)
 end
 
 function Base.similar(A::MtlSparseMatrixCSR{<:Any, Ti}, ::Type{Tv}) where {Tv, Ti}
     nzval = MtlVector{Tv}(undef, nnz(A))
-    return MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, device_copy(A.rowptr), device_copy(A.colval), nzval)
+    colval = device_copy(view(A.colval, 1:nnz(A)))
+    return MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, device_copy(A.rowptr), colval, nzval)
 end
 
 function Base.similar(A::MtlSparseMatrixCOO{<:Any, Ti}, ::Type{Tv}) where {Tv, Ti}
@@ -65,15 +67,21 @@ function empty_format(
     )
 end
 
+# A copy is compact: prefix copies drop the unspecified tail of an oversized
+# buffer, so `copy` is also the way to reclaim the slack of a merge result.
 function Base.copy(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
+    k = nnz(A)
     return MtlSparseMatrixCSC{Tv, Ti}(
-        A.m, A.n, device_copy(A.colptr), device_copy(A.rowval), device_copy(A.nzval)
+        A.m, A.n, device_copy(A.colptr),
+        device_copy(view(A.rowval, 1:k)), device_copy(view(A.nzval, 1:k))
     )
 end
 
 function Base.copy(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
+    k = nnz(A)
     return MtlSparseMatrixCSR{Tv, Ti}(
-        A.m, A.n, device_copy(A.rowptr), device_copy(A.colval), device_copy(A.nzval)
+        A.m, A.n, device_copy(A.rowptr),
+        device_copy(view(A.colval, 1:k)), device_copy(view(A.nzval, 1:k))
     )
 end
 
@@ -108,7 +116,10 @@ function SparseArrays.findnz(A::AbstractMtlSparseMatrix{Tv, Ti}) where {Tv, Ti}
     for j in 1:csc.n, k in ptr[j]:(ptr[j + 1] - 1)
         colhost[k] = Ti(j)
     end
-    return (device_copy(csc.rowval), MtlVector{Ti}(colhost), device_copy(csc.nzval))
+    return (
+        device_copy(view(csc.rowval, 1:nnz(csc))), MtlVector{Ti}(colhost),
+        device_copy(view(csc.nzval, 1:nnz(csc))),
+    )
 end
 
 as_csc(A::MtlSparseMatrixCSC) = A

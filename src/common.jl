@@ -11,7 +11,9 @@ abstract type AbstractMtlSparseMatrix{Tv, Ti <: Integer} <: AbstractSparseMatrix
 
 # Field convention for AbstractMtlSparseMatrix subtypes, which the generic
 # methods below rely on: every format stores its dimensions as `m::Int` and
-# `n::Int` and its values as `nzval::MtlVector{Tv}`.
+# `n::Int` and its values as `nzval::MtlVector{Tv}`; the compressed formats
+# additionally store their entry count as `nnz::Int` (their buffers may be
+# longer) and override `SparseArrays.nnz` below.
 
 Base.size(A::AbstractMtlSparseMatrix) = (A.m, A.n)
 
@@ -22,9 +24,14 @@ SparseArrays.nnz(A::AbstractMtlSparseMatrix) = length(A.nzval)
 
 The `MtlVector` of stored values of `A`, in the storage order of the format
 (row-major for CSR and COO, column-major for CSC), aliasing the matrix. Stored
-entries may hold the value zero.
+entries may hold the value zero. As with `SparseMatrixCSC`, the buffer may be
+longer than `nnz(A)`; entries past `nnz(A)` are unspecified.
 """
 SparseArrays.nonzeros(A::AbstractMtlSparseMatrix) = A.nzval
+
+# The stored prefix of the value buffer, for device code that maps over the
+# stored entries of a possibly oversized matrix.
+stored_nzval(A::AbstractMtlSparseMatrix) = view(A.nzval, 1:nnz(A))
 
 function Base.summary(io::IO, A::AbstractMtlSparseMatrix{Tv, Ti}) where {Tv, Ti}
     k = nnz(A)
@@ -48,17 +55,20 @@ function dims_check(m::Integer, n::Integer, ::Type{Ti}) where {Ti <: Integer}
 end
 
 """
-    compressed_check(major, minor, ptr, idx, nzval, ptrname, idxname)
+    compressed_check(major, minor, ptr, idx, nzval, ptrname, idxname) -> stored
 
 Validate the compressed-storage invariants shared by the CSR (`major == m`) and
-CSC (`major == n`) formats: `ptr` has length `major + 1`, starts at one, and is
-monotonically nondecreasing; `idx` and `nzval` have exactly `ptr[end] - 1`
-entries; and every index in `idx` lies in `1:minor`. Throws `ArgumentError`
-naming the violated invariant, with `ptrname`/`idxname` naming the arrays in the
-format's own vocabulary. The pointer invariants are checked on a host copy of
-`ptr` (an `O(major)` transfer, accepted at construction time); the index range
-is checked by a device reduction, so `idx` is never transferred. Sortedness
-within a major slice is an unchecked documented assumption, matching
+CSC (`major == n`) formats and return the stored entry count
+`stored = ptr[end] - 1`: `ptr` has length `major + 1`, starts at one, and is
+monotonically nondecreasing; `idx` and `nzval` have at least `stored` entries —
+longer buffers are accepted and their tails ignored, exactly as
+`SparseMatrixCSC` accepts `rowval`/`nzval` longer than `nnz` — and every index
+in `idx[1:stored]` lies in `1:minor`. Throws `ArgumentError` naming the
+violated invariant, with `ptrname`/`idxname` naming the arrays in the format's
+own vocabulary. The pointer invariants are checked on a host copy of `ptr` (an
+`O(major)` transfer, accepted at construction time); the index range is checked
+by a device reduction, so `idx` is never transferred. Sortedness within a major
+slice is an unchecked documented assumption, matching
 `SparseArrays.sparse_check`.
 """
 function compressed_check(
@@ -78,17 +88,17 @@ function compressed_check(
         )
     end
     stored = Int(hostptr[major + 1]) - 1
-    length(idx) == stored ||
-        throw(ArgumentError("$(length(idx)) == length($idxname) != $ptrname[end] - 1 == $stored"))
-    length(nzval) == stored ||
-        throw(ArgumentError("$(length(nzval)) == length(nzval) != $ptrname[end] - 1 == $stored"))
-    index_range_check(idx, minor, idxname)
-    return nothing
+    length(idx) >= stored ||
+        throw(ArgumentError("$(length(idx)) == length($idxname) < $ptrname[end] - 1 == $stored"))
+    length(nzval) >= stored ||
+        throw(ArgumentError("$(length(nzval)) == length(nzval) < $ptrname[end] - 1 == $stored"))
+    index_range_check(view(idx, 1:stored), minor, idxname)
+    return stored
 end
 
 # Checks `1 <= idx[k] <= bound` for every entry by a device reduction; `idx` is
 # never transferred to the host.
-function index_range_check(idx::MtlVector{Ti}, bound::Integer, name::String) where {Ti}
+function index_range_check(idx::AbstractVector{Ti}, bound::Integer, name::String) where {Ti}
     isempty(idx) && return nothing
     b = Ti(bound)
     inrange = mapreduce(j -> (one(Ti) <= j) & (j <= b), &, idx)
@@ -97,17 +107,18 @@ function index_range_check(idx::MtlVector{Ti}, bound::Integer, name::String) whe
 end
 
 """
-    device_copy(v::MtlVector)
+    device_copy(v)
 
-A copy of `v` computed by an identity broadcast on the device. `Base.copy` on
-an `MtlArray` synchronizes the whole queue and then copies on the host
-(`Metal.jl`'s GPU-to-GPU `unsafe_copyto!` is a raw memcpy that must not
-overlap pending kernels), costing on the order of 100 us per call; the
-broadcast stays on the device, is ordered after previously launched kernels,
-and returns without waiting. Used wherever library code copies a storage
-array.
+A copy of the device vector (or contiguous view of one) `v` as an `MtlVector`,
+computed by an identity broadcast on the device. `Base.copy` on an `MtlArray`
+synchronizes the whole queue and then copies on the host (`Metal.jl`'s
+GPU-to-GPU `unsafe_copyto!` is a raw memcpy that must not overlap pending
+kernels), costing on the order of 100 us per call; the broadcast stays on the
+device, is ordered after previously launched kernels, and returns without
+waiting. Used wherever library code copies a storage array; copying a prefix
+view compacts an oversized buffer.
 """
-device_copy(v::MtlVector) = identity.(v)
+device_copy(v::Union{MtlVector, SubArray{<:Any, 1, <:MtlVector}}) = identity.(v)
 
 """
     Unchecked

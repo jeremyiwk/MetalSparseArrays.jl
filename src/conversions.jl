@@ -24,7 +24,7 @@ function MtlSparseMatrixCSR(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
     )
     launch_per_slice(kernel, A.m + 1, rowptr, A.rowval, A.m, nnz(A))
     return MtlSparseMatrixCSR{Tv, Ti}(
-        unchecked, A.m, A.n, rowptr, device_copy(A.colval), device_copy(A.nzval)
+        unchecked, A.m, A.n, nnz(A), rowptr, device_copy(A.colval), device_copy(A.nzval)
     )
 end
 
@@ -49,7 +49,11 @@ reproduced, so converting a `SparseMatrixCSC` to the device and back is the
 identity up to the index type.
 """
 function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
-    At = SparseMatrixCSC(A.n, A.m, Array(A.rowptr), Array(A.colval), Array(A.nzval))
+    k = nnz(A)
+    At = SparseMatrixCSC(
+        A.n, A.m, Array(A.rowptr),
+        Array(view(A.colval, 1:k)), Array(view(A.nzval, 1:k))
+    )
     return sparse(transpose(At))
 end
 
@@ -78,7 +82,11 @@ unchanged. The conversion is exact, so converting a `SparseMatrixCSC` to the
 device and back is the identity up to the index type.
 """
 function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
-    return SparseMatrixCSC(A.m, A.n, Array(A.colptr), Array(A.rowval), Array(A.nzval))
+    k = nnz(A)
+    return SparseMatrixCSC(
+        A.m, A.n, Array(A.colptr),
+        Array(view(A.rowval, 1:k)), Array(view(A.nzval, 1:k))
+    )
 end
 
 """
@@ -106,13 +114,15 @@ conversion is asynchronous and deterministic, and the `(i, j, v)` triple set
 is preserved exactly.
 """
 function MtlSparseMatrixCOO(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
-    rowval = MtlVector{Ti}(undef, nnz(A))
-    if A.m > 0 && nnz(A) > 0
+    k = nnz(A)
+    rowval = MtlVector{Ti}(undef, k)
+    if A.m > 0 && k > 0
         kernel = Metal.@metal launch = false expand_ptr_kernel!(rowval, A.rowptr, A.m)
         launch_per_slice(kernel, A.m, rowval, A.rowptr, A.m)
     end
     return MtlSparseMatrixCOO{Tv, Ti}(
-        unchecked, A.m, A.n, rowval, device_copy(A.colval), device_copy(A.nzval)
+        unchecked, A.m, A.n, rowval,
+        device_copy(view(A.colval, 1:k)), device_copy(view(A.nzval, 1:k))
     )
 end
 

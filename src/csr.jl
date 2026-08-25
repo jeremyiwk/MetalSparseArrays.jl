@@ -16,9 +16,9 @@ validates the invariants above and that every column index lies in `1:n`, and
 throws `ArgumentError` naming the violated invariant otherwise. Column indices
 within a row are assumed sorted ascending without duplicates and this is not
 validated, matching the assumption `SparseMatrixCSC` makes for its row indices.
-Unlike `SparseMatrixCSC`, the index and value arrays must have exactly their
-required lengths — oversized buffers are not accepted, so the stored arrays
-always mean what the invariants say.
+As with `SparseMatrixCSC`, `colval` and `nzval` may be longer than `k`; the
+entries past `k` are unspecified, ignored by every operation, and dropped by
+`copy`. `nnz` reports `k`, from `rowptr`, not the buffer length.
 
 Stored entries with the value zero are preserved, matching `SparseArrays`.
 Convert back with `SparseMatrixCSC(A)` or `adapt(Array, A)`; the round trip is
@@ -27,6 +27,7 @@ exact, including the sparsity pattern and index order.
 mutable struct MtlSparseMatrixCSR{Tv, Ti <: Integer} <: AbstractMtlSparseMatrix{Tv, Ti}
     const m::Int
     const n::Int
+    nnz::Int
     rowptr::MtlVector{Ti}
     colval::MtlVector{Ti}
     nzval::MtlVector{Tv}
@@ -36,19 +37,22 @@ mutable struct MtlSparseMatrixCSR{Tv, Ti <: Integer} <: AbstractMtlSparseMatrix{
             colval::MtlVector{Ti}, nzval::MtlVector{Tv}
         ) where {Tv, Ti <: Integer}
         dims_check(m, n, Ti)
-        compressed_check(m, n, rowptr, colval, nzval, "rowptr", "colval")
-        return new{Tv, Ti}(m, n, rowptr, colval, nzval)
+        stored = compressed_check(m, n, rowptr, colval, nzval, "rowptr", "colval")
+        return new{Tv, Ti}(m, n, stored, rowptr, colval, nzval)
     end
 
     # Unchecked construction, for arrays a kernel guarantees by construction;
-    # see the docstring of `Unchecked` in common.jl.
+    # see the docstring of `Unchecked` in common.jl. `stored` is the entry
+    # count `rowptr[end] - 1`, which the caller knows without a device read.
     function MtlSparseMatrixCSR{Tv, Ti}(
-            ::Unchecked, m::Integer, n::Integer, rowptr::MtlVector{Ti},
-            colval::MtlVector{Ti}, nzval::MtlVector{Tv}
+            ::Unchecked, m::Integer, n::Integer, stored::Integer,
+            rowptr::MtlVector{Ti}, colval::MtlVector{Ti}, nzval::MtlVector{Tv}
         ) where {Tv, Ti <: Integer}
-        return new{Tv, Ti}(m, n, rowptr, colval, nzval)
+        return new{Tv, Ti}(m, n, stored, rowptr, colval, nzval)
     end
 end
+
+SparseArrays.nnz(A::MtlSparseMatrixCSR) = A.nnz
 
 function MtlSparseMatrixCSR(
         m::Integer, n::Integer, rowptr::MtlVector{Ti},

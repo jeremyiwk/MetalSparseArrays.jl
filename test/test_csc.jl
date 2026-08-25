@@ -36,6 +36,20 @@
             @test SparseMatrixCSC(dA) ==
                 sparse([2, 1, 2], [1, 2, 3], Float32[2, 1, 3], 2, 3)
 
+            # Oversized buffers are accepted with their tails ignored — the
+            # tail values (an out-of-range index included) never participate —
+            # exactly as SparseMatrixCSC accepts rowval/nzval longer than nnz.
+            # nnz comes from the pointer array, and copy compacts.
+            dover = MtlSparseMatrixCSC(
+                2, 3, colptr, dev([2, 1, 2, 9, 7], Ti), dev([2, 1, 3, 99, 42], Float32)
+            )
+            @test nnz(dover) == 3
+            @test exact_equal(SparseMatrixCSC(dA), SparseMatrixCSC(dover))
+            compact = copy(dover)
+            @test nnz(compact) == 3
+            @test length(nonzeros(compact)) == 3
+            @test exact_equal(SparseMatrixCSC(dA), SparseMatrixCSC(compact))
+
             # Each invariant violated in turn; the error names the invariant.
             @test_throws ArgumentError MtlSparseMatrixCSC(
                 2, 3, dev([2, 2, 3, 4], Ti), rowval, nzval

@@ -34,10 +34,16 @@ MtlSparseStyle(::Val{2}) = MtlSparseStyle()
 # refuses outright.
 Base.BroadcastStyle(s::MtlSparseStyle, ::Metal.MtlArrayStyle) = s
 
+# The pattern of `A` (index arrays prefix-copied, so the result is compact)
+# with the given value array of length `nnz(A)`.
 with_nzval(A::MtlSparseMatrixCSC{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
-    MtlSparseMatrixCSC{Tv, Ti}(A.m, A.n, device_copy(A.colptr), device_copy(A.rowval), nzval)
+    MtlSparseMatrixCSC{Tv, Ti}(
+    A.m, A.n, device_copy(A.colptr), device_copy(view(A.rowval, 1:nnz(A))), nzval
+)
 with_nzval(A::MtlSparseMatrixCSR{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
-    MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, device_copy(A.rowptr), device_copy(A.colval), nzval)
+    MtlSparseMatrixCSR{Tv, Ti}(
+    A.m, A.n, device_copy(A.rowptr), device_copy(view(A.colval, 1:nnz(A))), nzval
+)
 with_nzval(A::MtlSparseMatrixCOO{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
     MtlSparseMatrixCOO{Tv, Ti}(A.m, A.n, device_copy(A.rowval), device_copy(A.colval), nzval)
 
@@ -59,7 +65,7 @@ function Base.copy(bc::Broadcast.Broadcasted{MtlSparseStyle})
         )
         if iszero(fzero) && sparse_count == 1
             nzval = broadcast(
-                flat.f, map(a -> a isa AbstractMtlSparseMatrix ? a.nzval : a, args)...
+                flat.f, map(a -> a isa AbstractMtlSparseMatrix ? stored_nzval(a) : a, args)...
             )
             return with_nzval(A, nzval)
         elseif iszero(fzero)
@@ -149,9 +155,11 @@ function rebind!(dest::F, A::SparseMatrixCSC) where {F <: AbstractMtlSparseMatri
     if dest isa MtlSparseMatrixCSC
         dest.colptr = tmp.colptr
         dest.rowval = tmp.rowval
+        dest.nnz = tmp.nnz
     elseif dest isa MtlSparseMatrixCSR
         dest.rowptr = tmp.rowptr
         dest.colval = tmp.colval
+        dest.nnz = tmp.nnz
     else
         dest.rowval = tmp.rowval
         dest.colval = tmp.colval

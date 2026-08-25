@@ -131,33 +131,39 @@ function launch_per_slice(kernel, major::Integer, args...)
 end
 
 """
-    merge_compressed(g, major, Ti, ptrA, idxA, valA, ptrB, idxB, valB)
+    merge_compressed(g, major, Ti, ptrA, idxA, valA, ptrB, idxB, valB, bound)
+        -> (ptrC, idxC, valC, stored)
 
-The compressed storage arrays `(ptrC, idxC, valC)` of `C = g.(A, B)`, where the
-two operands are given by the compressed arrays of a common format with `major`
-slices and `g` is a two-argument function with `g(0, 0) == 0`. Minor indices
+The compressed storage arrays and entry count of `C = g.(A, B)`, where the two
+operands are given by the compressed arrays of a common format with `major`
+slices, `g` is a two-argument function with `g(0, 0) == 0`, and `bound` is the
+operands' combined entry count — an upper bound on the result's. Minor indices
 within a slice are assumed sorted ascending without duplicates — the invariant
 the formats document — and the result satisfies the same invariant, so the
-output arrays are valid for unchecked construction.
+output arrays are valid for unchecked construction. `idxC` and `valC` have
+length `bound`, with entries past `stored` unspecified, which the formats
+accept as `SparseMatrixCSC` does.
 
-Two device passes with a scan between them: a count kernel sizes each slice of
-the result (evaluating `g`, because computed zeros are dropped),
-[`ptr_scan!`](@ref) turns the counts into `ptrC`, and a fill kernel writes
-each slice at its offset. `g` is evaluated twice per union position, once per
-pass; the
-alternative, materializing uncompacted values, would cost union-sized device
+Two device passes with a scan between them, all in one command buffer: a count
+kernel sizes each slice of the result (evaluating `g`, because computed zeros
+are dropped), [`ptr_scan!`](@ref) turns the counts into `ptrC`, and a fill
+kernel writes each slice at its offset into the bound-sized output. `g` is
+evaluated twice per union position, once per pass; the alternative,
+materializing uncompacted values, would cost a second set of bound-sized
 buffers. No atomics are involved and each thread writes a disjoint output
-range, so repeated calls on the same input are bit-identical. The host reads
-back exactly one element (`ptrC[end]`, to size the output); that read
-synchronizes, and the fill kernel launched after it is asynchronous.
+range, so repeated calls on the same input are bit-identical. The host touches
+the device once, reading `ptrC[end]` after the fill has been queued; that
+single read synchronizes everything this function launched.
 """
 function merge_compressed(
         g, major::Integer, ::Type{Ti},
         ptrA::MtlVector{Ti}, idxA::MtlVector{Ti}, valA::MtlVector,
-        ptrB::MtlVector{Ti}, idxB::MtlVector{Ti}, valB::MtlVector
+        ptrB::MtlVector{Ti}, idxB::MtlVector{Ti}, valB::MtlVector, bound::Integer
     ) where {Ti <: Integer}
     Tv = Base.promote_op(g, eltype(valA), eltype(valB))
     ptrC = MtlVector{Ti}(undef, major + 1)
+    idxC = MtlVector{Ti}(undef, bound)
+    valC = MtlVector{Tv}(undef, bound)
     if major > 0
         counts = MtlVector{Ti}(undef, major)
         kernel = Metal.@metal launch = false merge_count_kernel!(
@@ -165,21 +171,19 @@ function merge_compressed(
         )
         launch_per_slice(kernel, major, counts, g, ptrA, idxA, valA, ptrB, idxB, valB, major)
         ptr_scan!(ptrC, counts, one(Ti))
+        if bound > 0
+            kernel = Metal.@metal launch = false merge_fill_kernel!(
+                idxC, valC, g, ptrC, ptrA, idxA, valA, ptrB, idxB, valB, major
+            )
+            launch_per_slice(
+                kernel, major, idxC, valC, g, ptrC, ptrA, idxA, valA, ptrB, idxB, valB, major
+            )
+        end
     else
         fill!(view(ptrC, 1:1), one(Ti))
     end
     stored = Int(Array(view(ptrC, (major + 1):(major + 1)))[1]) - 1
-    idxC = MtlVector{Ti}(undef, stored)
-    valC = MtlVector{Tv}(undef, stored)
-    if stored > 0
-        kernel = Metal.@metal launch = false merge_fill_kernel!(
-            idxC, valC, g, ptrC, ptrA, idxA, valA, ptrB, idxB, valB, major
-        )
-        launch_per_slice(
-            kernel, major, idxC, valC, g, ptrC, ptrA, idxA, valA, ptrB, idxB, valB, major
-        )
-    end
-    return ptrC, idxC, valC
+    return ptrC, idxC, valC, stored
 end
 
 """
@@ -190,7 +194,12 @@ two-argument function `g` with `g(0, 0) == 0` and operands of equal dimensions
 and equal index type. The result takes the format and index type of `A` and
 the element type `g` produces on the operands' element types, and agrees
 exactly — pattern, index arrays, and stored values — with
-`broadcast(g, SparseMatrixCSC(A), SparseMatrixCSC(B))`, deterministically.
+`broadcast(g, SparseMatrixCSC(A), SparseMatrixCSC(B))`, deterministically. A
+compressed result's index and value buffers have length `nnz(A) + nnz(B)` —
+the result size is not known on the host until the merge has run, and sizing
+for the upper bound is what limits the merge to a single synchronization —
+with entries past `nnz` unspecified, as `SparseMatrixCSC` allows; `copy`
+compacts them.
 
 The merge runs over columns when `A` is CSC and over rows otherwise, so an
 operand or result in another format is converted first; the merge itself is
@@ -201,20 +210,26 @@ function merge_broadcast(
         g, A::MtlSparseMatrixCSC{<:Any, Ti}, B::AbstractMtlSparseMatrix{<:Any, Ti}
     ) where {Ti}
     Bc = as_csc(B)
-    colptr, rowval, nzval = merge_compressed(
-        g, A.n, Ti, A.colptr, A.rowval, A.nzval, Bc.colptr, Bc.rowval, Bc.nzval
+    colptr, rowval, nzval, stored = merge_compressed(
+        g, A.n, Ti, A.colptr, A.rowval, A.nzval, Bc.colptr, Bc.rowval, Bc.nzval,
+        nnz(A) + nnz(Bc)
     )
-    return MtlSparseMatrixCSC{eltype(nzval), Ti}(unchecked, A.m, A.n, colptr, rowval, nzval)
+    return MtlSparseMatrixCSC{eltype(nzval), Ti}(
+        unchecked, A.m, A.n, stored, colptr, rowval, nzval
+    )
 end
 
 function merge_broadcast(
         g, A::MtlSparseMatrixCSR{<:Any, Ti}, B::AbstractMtlSparseMatrix{<:Any, Ti}
     ) where {Ti}
     Bc = as_csr(B)
-    rowptr, colval, nzval = merge_compressed(
-        g, A.m, Ti, A.rowptr, A.colval, A.nzval, Bc.rowptr, Bc.colval, Bc.nzval
+    rowptr, colval, nzval, stored = merge_compressed(
+        g, A.m, Ti, A.rowptr, A.colval, A.nzval, Bc.rowptr, Bc.colval, Bc.nzval,
+        nnz(A) + nnz(Bc)
     )
-    return MtlSparseMatrixCSR{eltype(nzval), Ti}(unchecked, A.m, A.n, rowptr, colval, nzval)
+    return MtlSparseMatrixCSR{eltype(nzval), Ti}(
+        unchecked, A.m, A.n, stored, rowptr, colval, nzval
+    )
 end
 
 function merge_broadcast(
