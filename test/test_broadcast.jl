@@ -5,7 +5,7 @@
 # libm's agreement with the host is a separate, documented assumption checked
 # once at the end.
 
-@testset "broadcast" begin
+@testset "broadcast Ti=$Ti" for Ti in INDEX_TYPES
     if DEVICE_AVAILABLE
         @testset "zero-preserving $F Tv=$Tv" for F in SPARSE_TYPES, Tv in ELEMENT_TYPES
             two = Tv(2)
@@ -31,7 +31,7 @@
                     continue
                 end
                 for A in pattern_corpus(Tv)
-                    dA = F{Tv, Int32}(A)
+                    dA = F{Tv, Ti}(A)
                     dB = device_f(dA)
                     @test dB isa F
                     # Pattern preserved exactly, stored zeros included.
@@ -52,16 +52,16 @@
 
         @testset "element type change" begin
             A = testsparse(ComplexF32, Int, 11, 7; density = 0.3, seed = 14)
-            dA = MtlSparseMatrixCSR{ComplexF32, Int32}(A)
+            dA = MtlSparseMatrixCSR{ComplexF32, Ti}(A)
             dB = abs2.(dA)
-            @test dB isa MtlSparseMatrixCSR{Float32, Int32}
+            @test dB isa MtlSparseMatrixCSR{Float32, Ti}
             @test same_pattern(A, dB)
             @test Array(nonzeros(dB)) == Array(abs2.(nonzeros(dA)))
         end
 
         @testset "densifying broadcasts give dense device results $F" for F in SPARSE_TYPES
             A = testsparse(Float32, Int, 6, 6; seed = 15)
-            dA = F{Float32, Int32}(A)
+            dA = F{Float32, Ti}(A)
             D = Array(A)
             # Comparison is against the same expression over the dense device
             # matrix (bit-exact, same backend); host agreement additionally
@@ -82,7 +82,7 @@
 
         @testset "sparse with dense operand densifies $F" for F in SPARSE_TYPES
             A = testsparse(Float32, Int, 6, 6; seed = 16)
-            dA = F{Float32, Int32}(A)
+            dA = F{Float32, Ti}(A)
             dD = MtlArray(fill(2.0f0, 6, 6))
             dB = dA .+ dD
             @test dB isa MtlMatrix{Float32}
@@ -109,10 +109,10 @@
                 (testsparse(Tv, Int, 6, 6; seed = 22), spzeros(Tv, 6, 6)),
             ]
             for (A, B) in pairs, op in (+, -, *)
-                dA = F{Tv, Int32}(A)
-                dB2 = F{Tv, Int32}(B)
+                dA = F{Tv, Ti}(A)
+                dB2 = F{Tv, Ti}(B)
                 dC = broadcast(op, dA, dB2)
-                @test dC isa F{Tv, Int32}
+                @test dC isa F{Tv, Ti}
                 @test exact_equal(broadcast(op, A, B), SparseMatrixCSC(dC))
             end
         end
@@ -120,11 +120,11 @@
         @testset "sparse-sparse mixed format and densifying" begin
             A = testsparse(Float32, Int, 8, 8; seed = 23)
             B = testsparse(Float32, Int, 8, 8; seed = 24)
-            dR = MtlSparseMatrixCSR{Float32, Int32}(A)
-            dC = MtlSparseMatrixCSC{Float32, Int32}(B)
+            dR = MtlSparseMatrixCSR{Float32, Ti}(A)
+            dC = MtlSparseMatrixCSC{Float32, Ti}(B)
             # Result format follows the first sparse operand.
             mixed = dR .+ dC
-            @test mixed isa MtlSparseMatrixCSR{Float32, Int32}
+            @test mixed isa MtlSparseMatrixCSR{Float32, Ti}
             @test exact_equal(A .+ B, SparseMatrixCSC(mixed))
             # f(0, 0) != 0 densifies, per the CUDA convention.
             eq = dR .== dC
@@ -143,17 +143,17 @@
                 (dA -> dA .= 1, hA -> hA .= 1),
                 (dA -> dA .= D, hA -> hA .= D),
                 (dA -> dA .= MtlArray(D), hA -> hA .= D),
-                (dA -> dA .= F{Float32, Int32}(B), hA -> hA .= B),
+                (dA -> dA .= F{Float32, Ti}(B), hA -> hA .= B),
                 (dA -> dA .= dA .+ 1, hA -> hA .= hA .+ 1),
                 (dA -> dA .*= 2, hA -> hA .*= 2),
             ]
             for (device_case, host_case) in cases
-                dA = F{Float32, Int32}(A0)
+                dA = F{Float32, Ti}(A0)
                 hA = copy(A0)
                 returned = device_case(dA)
                 host_case(hA)
                 @test returned === dA
-                @test dA isa F{Float32, Int32}
+                @test dA isa F{Float32, Ti}
                 @test exact_equal(hA, SparseMatrixCSC(dA))
             end
         end

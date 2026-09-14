@@ -74,18 +74,10 @@ function coo_check(
 end
 
 function MtlSparseMatrixCOO{Tv, Ti}(A::SparseMatrixCSC) where {Tv, Ti <: Integer}
-    m, n = size(A)
-    (m <= typemax(Ti) && n <= typemax(Ti)) ||
-        throw(ArgumentError("matrix with dimensions ($m, $n) does not fit in Ti = $Ti"))
-    At = sparse(transpose(A))
-    rowhost = Vector{Ti}(undef, nnz(A))
-    for i in 1:m, k in At.colptr[i]:(At.colptr[i + 1] - 1)
-        rowhost[k] = Ti(i)
-    end
-    rowval = MtlVector{Ti}(rowhost)
-    colval = MtlVector{Ti}(convert(Vector{Ti}, At.rowval))
-    nzval = MtlVector{Tv}(convert(Vector{Tv}, At.nzval))
-    return MtlSparseMatrixCOO{Tv, Ti}(m, n, rowval, colval, nzval)
+    ptr, cols, values = host_compressed(A, Tv, Ti, true)
+    return MtlSparseMatrixCOO{Tv, Ti}(
+        unchecked, A.m, A.n, expand_ptr(ptr, nnz(A)), cols, values
+    )
 end
 
 function MtlSparseMatrixCOO(A::SparseMatrixCSC{Tv}) where {Tv}

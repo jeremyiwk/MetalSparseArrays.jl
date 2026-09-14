@@ -13,3 +13,7 @@ Documentation: [jeremyiwk.github.io/MetalSparseArrays.jl/dev](https://jeremyiwk.
 Supported Julia versions: 1.10 (current LTS) and later. Device operations require Apple Silicon. The test suite runs anywhere for local development (device test sets are skipped without a GPU), but merges are gated on CI runs where a Metal device is required to be present and exercised — functionality is never merged unverified on device.
 
 Contributions follow the [ColPrac](https://github.com/SciML/ColPrac) contributor guide.
+
+For a CPU-only test run on a machine with a GPU, set
+`METALSPARSE_TEST_CPU_ONLY=true`. `CI_EXPECT_DEVICE=true` still rejects any run
+that would skip device tests.

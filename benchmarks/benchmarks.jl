@@ -10,35 +10,37 @@
 # Timing is by the standard-library macros, not BenchmarkTools: a case marked
 # `device` is timed by `Metal.@timed` (the macro behind `Metal.@time`, which
 # synchronizes the GPU before the expression and wraps it in `Metal.@sync`, so
-# the measurement covers the complete device work and nothing else) and a host
+# the measurement includes host dispatch, allocation and device completion) and a host
 # case by `Base.@elapsed` (the timing core of `Base.@time`). Each case is run
-# once untimed to compile, then the minimum over `REPS` repetitions is
-# reported; single-shot timings measured ~250 us high against minimums on this
+# once untimed to compile, then minimum, median and p95 over `REPS` repetitions
+# are reported; single-shot timings measured ~250 us high against minimums on this
 # hardware.
 
 using LinearAlgebra: I, kron
 using Metal: Metal, MtlArray
 using MetalSparseArrays
-using SparseArrays: SparseMatrixCSC, sparse, spdiagm
+using SparseArrays: SparseMatrixCSC, sparse, spdiagm, nnz, findnz
 
 """
-    Benchmark(group, key, device, thunk)
+    Benchmark(group, key, device, thunk, evals)
 
 One benchmark case: `thunk` is the zero-argument operation to time, `group`
 names the operation, `key` identifies representation, format, element type,
-and size, and `device` selects GPU-synchronized timing.
+and size, `device` selects GPU-synchronized timing, and `evals` counts operations
+per synchronization. Reported times are normalized per operation.
 """
 struct Benchmark
     group::String
     key::Tuple
     device::Bool
     thunk::Function
+    evals::Int
 end
 
 const SUITE = Benchmark[]
 
-benchmark!(thunk::Function, group::String, key...; device::Bool = false) =
-    push!(SUITE, Benchmark(group, key, device, thunk))
+benchmark!(thunk::Function, group::String, key...; device::Bool = false, evals::Int = 1) =
+    push!(SUITE, Benchmark(group, key, device, thunk, evals))
 
 """
     laplacian_2d(Tv, n)
@@ -112,4 +114,36 @@ end
 for Tv in (Float32,), N in (1024, 4096, 16384)
     A, B = dense_row_pair(Tv, N)
     add_merge_cases!("sparse_sparse_add_dense_row", A, B)
+end
+
+# Match CPU and device index widths when measuring array-interface overhead.
+for Tv in (Float32, ComplexF32), Ti in (Int32, Int64), N in (256, 4096, 65536, 262144)
+    A = SparseMatrixCSC{Tv, Ti}(
+        spdiagm(
+            -1 => fill(-one(Tv), N - 1), 0 => fill(Tv(2), N), 1 => fill(-one(Tv), N - 1)
+        )
+    )
+    for (name, f) in (
+            ("copy", copy), ("similar", similar),
+            ("unary_scale", a -> a .* Tv(2)),
+            ("inplace_scale", a -> (a .*= -one(Tv))), ("findnz", findnz),
+        )
+        benchmark!(() -> f(A), name, "SparseArrays", "CSC", Tv, Ti, N, nnz(A))
+        for F in (MtlSparseMatrixCSR, MtlSparseMatrixCSC, MtlSparseMatrixCOO)
+            dA = F{Tv, Ti}(A)
+            benchmark!(() -> f(dA), name, "device sparse", nameof(F), Tv, Ti, N, nnz(A); device = true)
+        end
+    end
+    if N <= MAX_DENSE_ORDER
+        benchmark!(() -> Matrix(A), "densify", "SparseArrays", "CSC", Tv, Ti, N, nnz(A))
+        for F in (MtlSparseMatrixCSR, MtlSparseMatrixCSC, MtlSparseMatrixCOO)
+            dA = F{Tv, Ti}(A)
+            benchmark!(() -> Metal.MtlMatrix(dA), "densify", "device sparse", nameof(F), Tv, Ti, N, nnz(A); device = true)
+        end
+    end
+    benchmark!(() -> (A .= zero(Tv)), "zero_fill_batch", "SparseArrays", "CSC", Tv, Ti, N, nnz(A); evals = 100)
+    for F in (MtlSparseMatrixCSR, MtlSparseMatrixCSC, MtlSparseMatrixCOO)
+        dA = F{Tv, Ti}(A)
+        benchmark!(() -> (dA .= zero(Tv)), "zero_fill_batch", "device sparse", nameof(F), Tv, Ti, N, nnz(A); device = true, evals = 100)
+    end
 end

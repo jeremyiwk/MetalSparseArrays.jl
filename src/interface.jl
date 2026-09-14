@@ -12,21 +12,8 @@ pattern of `A` (index arrays copied) with an uninitialized value array of the
 requested element type; `similar(A, [Tv,] dims)` gives an empty (no stored
 entries) matrix of the same format with the requested dimensions.
 """
-function Base.similar(A::MtlSparseMatrixCSC{<:Any, Ti}, ::Type{Tv}) where {Tv, Ti}
-    nzval = MtlVector{Tv}(undef, nnz(A))
-    rowval = device_copy(view(A.rowval, 1:nnz(A)))
-    return MtlSparseMatrixCSC{Tv, Ti}(A.m, A.n, device_copy(A.colptr), rowval, nzval)
-end
-
-function Base.similar(A::MtlSparseMatrixCSR{<:Any, Ti}, ::Type{Tv}) where {Tv, Ti}
-    nzval = MtlVector{Tv}(undef, nnz(A))
-    colval = device_copy(view(A.colval, 1:nnz(A)))
-    return MtlSparseMatrixCSR{Tv, Ti}(A.m, A.n, device_copy(A.rowptr), colval, nzval)
-end
-
-function Base.similar(A::MtlSparseMatrixCOO{<:Any, Ti}, ::Type{Tv}) where {Tv, Ti}
-    nzval = MtlVector{Tv}(undef, nnz(A))
-    return MtlSparseMatrixCOO{Tv, Ti}(A.m, A.n, device_copy(A.rowval), device_copy(A.colval), nzval)
+function Base.similar(A::AbstractMtlSparseMatrix, ::Type{Tv}) where {Tv}
+    return with_nzval(A, MtlVector{Tv}(undef, nnz(A)))
 end
 
 Base.similar(A::AbstractMtlSparseMatrix{Tv}) where {Tv} = similar(A, Tv)
@@ -44,18 +31,20 @@ end
 function empty_format(
         ::Type{<:MtlSparseMatrixCSC}, ::Type{Tv}, ::Type{Ti}, m::Integer, n::Integer
     ) where {Tv, Ti}
-    colptr = MtlVector{Ti}(ones(Ti, n + 1))
+    dims_check(m, n, Ti)
+    colptr = Metal.ones(Ti, n + 1)
     return MtlSparseMatrixCSC{Tv, Ti}(
-        m, n, colptr, MtlVector{Ti}(undef, 0), MtlVector{Tv}(undef, 0)
+        unchecked, m, n, 0, colptr, MtlVector{Ti}(undef, 0), MtlVector{Tv}(undef, 0)
     )
 end
 
 function empty_format(
         ::Type{<:MtlSparseMatrixCSR}, ::Type{Tv}, ::Type{Ti}, m::Integer, n::Integer
     ) where {Tv, Ti}
-    rowptr = MtlVector{Ti}(ones(Ti, m + 1))
+    dims_check(m, n, Ti)
+    rowptr = Metal.ones(Ti, m + 1)
     return MtlSparseMatrixCSR{Tv, Ti}(
-        m, n, rowptr, MtlVector{Ti}(undef, 0), MtlVector{Tv}(undef, 0)
+        unchecked, m, n, 0, rowptr, MtlVector{Ti}(undef, 0), MtlVector{Tv}(undef, 0)
     )
 end
 
@@ -69,27 +58,23 @@ end
 
 # A copy is compact: prefix copies drop the unspecified tail of an oversized
 # buffer, so `copy` is also the way to reclaim the slack of a merge result.
-function Base.copy(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
-    k = nnz(A)
-    return MtlSparseMatrixCSC{Tv, Ti}(
-        A.m, A.n, device_copy(A.colptr),
-        device_copy(view(A.rowval, 1:k)), device_copy(view(A.nzval, 1:k))
-    )
-end
+Base.copy(A::AbstractMtlSparseMatrix) = with_nzval(A, device_copy(stored_nzval(A)))
 
-function Base.copy(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
-    k = nnz(A)
-    return MtlSparseMatrixCSR{Tv, Ti}(
-        A.m, A.n, device_copy(A.rowptr),
-        device_copy(view(A.colval, 1:k)), device_copy(view(A.nzval, 1:k))
-    )
-end
-
-function Base.copy(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
-    return MtlSparseMatrixCOO{Tv, Ti}(
-        A.m, A.n, device_copy(A.rowval), device_copy(A.colval), device_copy(A.nzval)
-    )
-end
+# Copy a valid pattern without synchronizing to validate it again.
+with_nzval(A::MtlSparseMatrixCSC{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
+    MtlSparseMatrixCSC{Tv, Ti}(
+    unchecked, A.m, A.n, nnz(A), device_copy(A.colptr),
+    device_copy(view(A.rowval, 1:nnz(A))), nzval
+)
+with_nzval(A::MtlSparseMatrixCSR{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
+    MtlSparseMatrixCSR{Tv, Ti}(
+    unchecked, A.m, A.n, nnz(A), device_copy(A.rowptr),
+    device_copy(view(A.colval, 1:nnz(A))), nzval
+)
+with_nzval(A::MtlSparseMatrixCOO{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
+    MtlSparseMatrixCOO{Tv, Ti}(
+    unchecked, A.m, A.n, device_copy(A.rowval), device_copy(A.colval), nzval
+)
 
 Base.collect(A::AbstractMtlSparseMatrix) = Array(A)
 
@@ -106,18 +91,14 @@ SparseArrays.rowvals(A::MtlSparseMatrixCSC) = A.rowval
 
 The stored entries of `A` as three `MtlVector`s of row indices, column indices,
 and values, in the column-major order `SparseArrays.findnz` returns, freshly
-allocated. Computed via the CSC form of `A`; only index arrays pass through the
-host.
+allocated. CSC inputs are processed asynchronously on the device; other formats
+first convert to CSC, using the conversion behavior documented for that format.
 """
 function SparseArrays.findnz(A::AbstractMtlSparseMatrix{Tv, Ti}) where {Tv, Ti}
     csc = as_csc(A)
-    ptr = Array(csc.colptr)
-    colhost = Vector{Ti}(undef, nnz(csc))
-    for j in 1:csc.n, k in ptr[j]:(ptr[j + 1] - 1)
-        colhost[k] = Ti(j)
-    end
+    colval = expand_ptr(csc.colptr, nnz(csc))
     return (
-        device_copy(view(csc.rowval, 1:nnz(csc))), MtlVector{Ti}(colhost),
+        device_copy(view(csc.rowval, 1:nnz(csc))), colval,
         device_copy(view(csc.nzval, 1:nnz(csc))),
     )
 end

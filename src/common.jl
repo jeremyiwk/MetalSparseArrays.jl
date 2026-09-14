@@ -65,19 +65,19 @@ longer buffers are accepted and their tails ignored, exactly as
 `SparseMatrixCSC` accepts `rowval`/`nzval` longer than `nnz` — and every index
 in `idx[1:stored]` lies in `1:minor`. Throws `ArgumentError` naming the
 violated invariant, with `ptrname`/`idxname` naming the arrays in the format's
-own vocabulary. The pointer invariants are checked on a host copy of `ptr` (an
-`O(major)` transfer, accepted at construction time); the index range is checked
-by a device reduction, so `idx` is never transferred. Sortedness within a major
+own vocabulary. Host inputs are validated before transfer. For device inputs,
+pointer invariants are checked on a host copy of `ptr` (an `O(major)` transfer);
+the index range is checked by a device reduction, so `idx` is never transferred. Sortedness within a major
 slice is an unchecked documented assumption, matching
 `SparseArrays.sparse_check`.
 """
 function compressed_check(
-        major::Integer, minor::Integer, ptr::MtlVector{Ti}, idx::MtlVector{Ti},
-        nzval::MtlVector, ptrname::String, idxname::String
+        major::Integer, minor::Integer, ptr::AbstractVector{Ti}, idx::AbstractVector{Ti},
+        nzval::AbstractVector, ptrname::String, idxname::String
     ) where {Ti <: Integer}
     length(ptr) == major + 1 ||
         throw(ArgumentError("$(length(ptr)) == length($ptrname) != $(major + 1)"))
-    hostptr = Array(ptr)
+    hostptr = ptr isa MtlVector ? Array(ptr) : ptr
     hostptr[1] == 1 || throw(ArgumentError("$(hostptr[1]) == $ptrname[1] != 1"))
     for i in 2:(major + 1)
         hostptr[i - 1] <= hostptr[i] ||

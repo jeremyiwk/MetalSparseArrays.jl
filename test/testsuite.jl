@@ -17,7 +17,7 @@ const BFloat16 = Metal.BFloat16
 Whether a Metal device is present and usable. Test sets that require a device are
 skipped when this is `false`, so the suite still runs on machines without one.
 """
-const DEVICE_AVAILABLE = Metal.functional()
+const DEVICE_AVAILABLE = get(ENV, "METALSPARSE_TEST_CPU_ONLY", "false") != "true" && Metal.functional()
 
 # Guard against silently reduced coverage: an environment that promises a device
 # (CI on Apple Silicon runners) fails loudly if none is found, instead of green
@@ -79,7 +79,7 @@ const ELEMENT_TYPES = DEVICE_AVAILABLE ? supported_element_types(MtlArray) :
 Index types (`Ti`) that device-resident sparse formats support. `Int32` is the
 default and matches `CUDA.CUSPARSE`.
 """
-const INDEX_TYPES = (Int32,)
+const INDEX_TYPES = (Int32, Int64)
 
 # Make the exercised configuration visible in every test log, so a coverage
 # regression (a type silently dropping out of the probed set) is observable.

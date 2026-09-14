@@ -8,9 +8,9 @@
 # convention, adopted by the roadmap.) Sparse-sparse broadcast keeps the union
 # pattern, matching SparseArrays exactly, computed by the device pattern merge
 # in src/kernels/merge_broadcast.jl where it applies and by the host fallback
-# below otherwise (Metal.MPS has no sparse primitive — surveyed).
-# In-place `A .= rhs` follows SparseArrays semantics by running the stdlib
-# broadcast on a host mirror and rebinding the destination's storage arrays.
+# below otherwise (the surveyed Metal wrappers provide no sparse merge).
+# In-place `A .= rhs` uses device paths for scalar zero and zero-preserving
+# self broadcasts, and a host mirror for the remaining assignment semantics.
 
 """
     MtlSparseStyle <: Broadcast.AbstractArrayStyle{2}
@@ -21,8 +21,9 @@ function maps zero to zero — applied to the stored values on the device, the
 pattern preserved exactly, stored zeros included — and otherwise densifies to a
 dense `MtlMatrix` on the device, as `CUDA.CUSPARSE` does (`A .+ 1`, `cos.(A)`,
 and `A .* NaN` are dense results, never silent errors). A broadcast combining a
-sparse matrix with a dense device array densifies likewise. Broadcasts over
-more than one sparse matrix are not yet implemented and throw.
+sparse matrix with a dense device array densifies likewise. Sparse-sparse
+broadcasts merge the union pattern and drop computed zeros, using a device merge
+for two equal-sized operands with matching index types.
 """
 struct MtlSparseStyle <: Broadcast.AbstractArrayStyle{2} end
 
@@ -33,19 +34,6 @@ MtlSparseStyle(::Val{2}) = MtlSparseStyle()
 # densifies (below); without this rule the two styles conflict and broadcast
 # refuses outright.
 Base.BroadcastStyle(s::MtlSparseStyle, ::Metal.MtlArrayStyle) = s
-
-# The pattern of `A` (index arrays prefix-copied, so the result is compact)
-# with the given value array of length `nnz(A)`.
-with_nzval(A::MtlSparseMatrixCSC{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
-    MtlSparseMatrixCSC{Tv, Ti}(
-    A.m, A.n, device_copy(A.colptr), device_copy(view(A.rowval, 1:nnz(A))), nzval
-)
-with_nzval(A::MtlSparseMatrixCSR{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
-    MtlSparseMatrixCSR{Tv, Ti}(
-    A.m, A.n, device_copy(A.rowptr), device_copy(view(A.colval, 1:nnz(A))), nzval
-)
-with_nzval(A::MtlSparseMatrixCOO{<:Any, Ti}, nzval::MtlVector{Tv}) where {Tv, Ti} =
-    MtlSparseMatrixCOO{Tv, Ti}(A.m, A.n, device_copy(A.rowval), device_copy(A.colval), nzval)
 
 scalar_value(a) = a
 scalar_value(a::Base.RefValue) = a[]
@@ -105,15 +93,17 @@ In-place broadcast assignment `dest .= ...` with the exact semantics of
 `SparseArrays` for a sparse destination: assigning `0` keeps the pattern with
 stored zeros, a nonzero scalar stores every entry, a dense right-hand side
 takes the union of the old pattern and the dense nonzeros, and a sparse
-right-hand side replaces the pattern. Computed by running the stdlib broadcast
-on a host mirror and rebinding the destination's storage arrays (device arrays
-cannot resize, so a pattern change rebinds); values are converted to the
-destination's element type as the stdlib does.
+right-hand side replaces the pattern. Zero scalar assignment updates stored values
+asynchronously; zero-preserving unary/scalar expressions on the destination use
+device compaction, dropping computed zeros and reading back the resulting count.
+Other assignments use a host mirror. Pattern changes rebind storage arrays, so
+previously obtained storage aliases do not follow the replacement. Values are
+converted to the destination's element type as the stdlib does.
 """
 function Base.copyto!(
         dest::AbstractMtlSparseMatrix, bc::Broadcast.Broadcasted{MtlSparseStyle}
     )
-    return host_materialize!(dest, bc)
+    return materialize_sparse!(dest, bc)
 end
 
 # Base and GPUArrays both have entry points that bypass the destination's
@@ -121,17 +111,46 @@ end
 # fill!, the generic AbstractArray path scalar-indexes (`A .= Matrix`), and
 # GPUArrays claims any destination when the right-hand side carries the dense
 # device style (`A .= MtlMatrix`). Intercept them all on the destination type
-# and route to the host mirror.
+# and route to the shared assignment implementation.
 function Base.copyto!(
         dest::AbstractMtlSparseMatrix,
         bc::Broadcast.Broadcasted{<:Broadcast.DefaultArrayStyle}
     )
-    return host_materialize!(dest, bc)
+    return materialize_sparse!(dest, bc)
 end
 
 function Base.copyto!(
         dest::AbstractMtlSparseMatrix, bc::Broadcast.Broadcasted{<:Metal.MtlArrayStyle}
     )
+    return materialize_sparse!(dest, bc)
+end
+
+function materialize_sparse!(dest::AbstractMtlSparseMatrix, bc::Broadcast.Broadcasted)
+    flat = Broadcast.flatten(bc)
+    args = flat.args
+    if all(a -> !(a isa AbstractArray), args)
+        value = flat.f(map(scalar_value, args)...)
+        if iszero(value)
+            fill!(stored_nzval(dest), value)
+            return dest
+        end
+    elseif count(a -> a isa AbstractMtlSparseMatrix, args) == 1 &&
+            all(a -> !(a isa AbstractArray) || a === dest, args)
+        flat.f === identity && length(args) == 1 && return dest
+        slots = map(a -> a === dest ? MergeSlot() : scalar_value(a), args)
+        f = flat.f
+        g = (a, b) -> f(substitute_slots(slots, (a,))...)
+        if isbits(g) && iszero(g(zero(eltype(dest)), zero(eltype(dest))))
+            Tv = Base.promote_op(g, eltype(dest), eltype(dest))
+            if Tv === eltype(dest) &&
+                    2nnz(dest) + 1 <= typemax(indextype(dest))
+                # Unlike out-of-place unary broadcast, assignment drops computed zeros.
+                result = merge_broadcast(g, dest, dest)
+                rebind_storage!(dest, result, result.nzval)
+                return dest
+            end
+        end
+    end
     return host_materialize!(dest, bc)
 end
 
@@ -140,7 +159,7 @@ function host_materialize!(dest::AbstractMtlSparseMatrix, bc::Broadcast.Broadcas
     hostdest = SparseMatrixCSC(dest)
     hosts = map(
         a -> a isa AbstractMtlSparseMatrix ? SparseMatrixCSC(a) :
-            a isa MtlArray ? Array(a) : a,
+            a isa Metal.WrappedMtlArray ? Array(a) : a,
         flat.args
     )
     Broadcast.materialize!(hostdest, Broadcast.broadcasted(flat.f, hosts...))
@@ -152,6 +171,10 @@ end
 # host result converted to the destination's format and index type.
 function rebind!(dest::F, A::SparseMatrixCSC) where {F <: AbstractMtlSparseMatrix}
     tmp = format_like(dest, A)
+    return rebind_storage!(dest, tmp, tmp.nzval)
+end
+
+function rebind_storage!(dest, tmp, values)
     if dest isa MtlSparseMatrixCSC
         dest.colptr = tmp.colptr
         dest.rowval = tmp.rowval
@@ -164,6 +187,6 @@ function rebind!(dest::F, A::SparseMatrixCSC) where {F <: AbstractMtlSparseMatri
         dest.rowval = tmp.rowval
         dest.colval = tmp.colval
     end
-    dest.nzval = tmp.nzval
+    dest.nzval = values
     return dest
 end

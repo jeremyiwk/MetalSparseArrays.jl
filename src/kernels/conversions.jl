@@ -41,3 +41,55 @@ function contract_idx_kernel!(ptr, idx, major, stored)
 end
 
 ## COV_EXCL_STOP
+
+function expand_ptr(ptr::MtlVector{Ti}, stored::Integer) where {Ti}
+    idx = MtlVector{Ti}(undef, stored)
+    major = length(ptr) - 1
+    if major > 0 && stored > 0
+        kernel = Metal.@metal launch = false expand_ptr_kernel!(idx, ptr, major)
+        launch_per_slice(kernel, major, idx, ptr, major)
+    end
+    return idx
+end
+
+## COV_EXCL_START
+
+function scatter_compressed_kernel!(D, ptr, idx, val, major, column_major)
+    i = Int(thread_position_in_grid().x)
+    i <= major || return nothing
+    @inbounds for k in Int(ptr[i]):(Int(ptr[i + 1]) - 1)
+        if column_major
+            D[Int(idx[k]), i] = val[k]
+        else
+            D[i, Int(idx[k])] = val[k]
+        end
+    end
+    return nothing
+end
+
+function scatter_coo_kernel!(D, rows, cols, vals, stored)
+    k = Int(thread_position_in_grid().x)
+    k <= stored || return nothing
+    @inbounds D[Int(rows[k]), Int(cols[k])] = vals[k]
+    return nothing
+end
+
+## COV_EXCL_STOP
+
+function scatter!(D, A::Union{MtlSparseMatrixCSR, MtlSparseMatrixCSC})
+    column_major = A isa MtlSparseMatrixCSC
+    ptr, idx, major = column_major ? (A.colptr, A.rowval, A.n) : (A.rowptr, A.colval, A.m)
+    kernel = Metal.@metal launch = false scatter_compressed_kernel!(
+        D, ptr, idx, A.nzval, major, column_major
+    )
+    launch_per_slice(kernel, major, D, ptr, idx, A.nzval, major, column_major)
+    return D
+end
+
+function scatter!(D, A::MtlSparseMatrixCOO)
+    kernel = Metal.@metal launch = false scatter_coo_kernel!(
+        D, A.rowval, A.colval, A.nzval, nnz(A)
+    )
+    launch_per_slice(kernel, nnz(A), D, A.rowval, A.colval, A.nzval, nnz(A))
+    return D
+end

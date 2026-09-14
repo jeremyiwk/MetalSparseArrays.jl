@@ -164,24 +164,20 @@ function merge_compressed(
     ptrC = MtlVector{Ti}(undef, major + 1)
     idxC = MtlVector{Ti}(undef, bound)
     valC = MtlVector{Tv}(undef, bound)
-    if major > 0
-        counts = MtlVector{Ti}(undef, major)
-        kernel = Metal.@metal launch = false merge_count_kernel!(
-            counts, g, ptrA, idxA, valA, ptrB, idxB, valB, major
-        )
-        launch_per_slice(kernel, major, counts, g, ptrA, idxA, valA, ptrB, idxB, valB, major)
-        ptr_scan!(ptrC, counts, one(Ti))
-        if bound > 0
-            kernel = Metal.@metal launch = false merge_fill_kernel!(
-                idxC, valC, g, ptrC, ptrA, idxA, valA, ptrB, idxB, valB, major
-            )
-            launch_per_slice(
-                kernel, major, idxC, valC, g, ptrC, ptrA, idxA, valA, ptrB, idxB, valB, major
-            )
-        end
-    else
-        fill!(view(ptrC, 1:1), one(Ti))
+    if bound == 0
+        fill!(ptrC, one(Ti))
+        return ptrC, idxC, valC, 0
     end
+    counts = MtlVector{Ti}(undef, major)
+    kernel = Metal.@metal launch = false merge_count_kernel!(
+        counts, g, ptrA, idxA, valA, ptrB, idxB, valB, major
+    )
+    launch_per_slice(kernel, major, counts, g, ptrA, idxA, valA, ptrB, idxB, valB, major)
+    ptr_scan!(ptrC, counts, one(Ti))
+    kernel = Metal.@metal launch = false merge_fill_kernel!(
+        idxC, valC, g, ptrC, ptrA, idxA, valA, ptrB, idxB, valB, major
+    )
+    launch_per_slice(kernel, major, idxC, valC, g, ptrC, ptrA, idxA, valA, ptrB, idxB, valB, major)
     stored = Int(Array(view(ptrC, (major + 1):(major + 1)))[1]) - 1
     return ptrC, idxC, valC, stored
 end
@@ -235,7 +231,7 @@ end
 function merge_broadcast(
         g, A::MtlSparseMatrixCOO{<:Any, Ti}, B::AbstractMtlSparseMatrix{<:Any, Ti}
     ) where {Ti}
-    return MtlSparseMatrixCOO(merge_broadcast(g, MtlSparseMatrixCSR(A), B))
+    return MtlSparseMatrixCOO(merge_broadcast(g, as_csr(A), B))
 end
 
 # The sparse operands of a flattened argument tuple, by recursion over the

@@ -10,4 +10,5 @@ include("testsuite.jl")
     include("test_interface.jl")
     include("test_broadcast.jl")
     include("test_kernels.jl")
+    include("test_regressions.jl")
 end

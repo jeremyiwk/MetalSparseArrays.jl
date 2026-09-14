@@ -1,3 +1,16 @@
+# Validate host storage before uploading it; only the stored prefix is converted.
+function host_compressed(A::SparseMatrixCSC, ::Type{Tv}, ::Type{Ti}, transposed) where {Tv, Ti}
+    dims_check(A.m, A.n, Ti)
+    stored = compressed_check(A.n, A.m, A.colptr, A.rowval, A.nzval, "colptr", "rowval")
+    stored + 1 <= typemax(Ti) || throw(ArgumentError("stored count does not fit in Ti = $Ti"))
+    B = transposed ? sparse(transpose(A)) : A
+    return (
+        MtlVector{Ti}(Vector{Ti}(B.colptr)),
+        MtlVector{Ti}(Vector{Ti}(view(B.rowval, 1:stored))),
+        MtlVector{Tv}(Vector{Tv}(view(B.nzval, 1:stored))),
+    )
+end
+
 # Conversions between the device formats. COO and CSR share row-major entry
 # order, so those two conversions run entirely on the device (the kernels live
 # in src/kernels/conversions.jl); every conversion involving CSC reorders
@@ -16,15 +29,8 @@ asynchronous and deterministic, and the `(i, j, v)` triple set is preserved
 exactly.
 """
 function MtlSparseMatrixCSR(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
-    nnz(A) + 1 <= typemax(Ti) ||
-        throw(ArgumentError("$(nnz(A)) stored entries do not fit a pointer array in Ti = $Ti"))
-    rowptr = MtlVector{Ti}(undef, A.m + 1)
-    kernel = Metal.@metal launch = false contract_idx_kernel!(
-        rowptr, A.rowval, A.m, nnz(A)
-    )
-    launch_per_slice(kernel, A.m + 1, rowptr, A.rowval, A.m, nnz(A))
     return MtlSparseMatrixCSR{Tv, Ti}(
-        unchecked, A.m, A.n, nnz(A), rowptr, device_copy(A.colval), device_copy(A.nzval)
+        unchecked, A.m, A.n, nnz(A), coo_rowptr(A), device_copy(A.colval), device_copy(A.nzval)
     )
 end
 
@@ -115,11 +121,7 @@ is preserved exactly.
 """
 function MtlSparseMatrixCOO(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
     k = nnz(A)
-    rowval = MtlVector{Ti}(undef, k)
-    if A.m > 0 && k > 0
-        kernel = Metal.@metal launch = false expand_ptr_kernel!(rowval, A.rowptr, A.m)
-        launch_per_slice(kernel, A.m, rowval, A.rowptr, A.m)
-    end
+    rowval = expand_ptr(A.rowptr, k)
     return MtlSparseMatrixCOO{Tv, Ti}(
         unchecked, A.m, A.n, rowval,
         device_copy(view(A.colval, 1:k)), device_copy(view(A.nzval, 1:k))
@@ -150,12 +152,22 @@ function SparseArrays.SparseMatrixCSC(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, 
     return sparse(Array(A.rowval), Array(A.colval), Array(A.nzval), A.m, A.n)
 end
 
-# `as_coo` and `as_csr` give every format a view of itself in the named
-# format, for the dense scatter below and the row-major merge in
-# `src/kernels/merge_broadcast.jl`; same-format is the identity, no copy.
+# `as_csr` gives the merge a row-major representation; same-format is identity.
 # `as_csc` sits with its caller in `interface.jl`.
-as_coo(A::MtlSparseMatrixCOO) = A
-as_coo(A::AbstractMtlSparseMatrix) = MtlSparseMatrixCOO(A)
+function coo_rowptr(A::MtlSparseMatrixCOO{<:Any, Ti}) where {Ti}
+    nnz(A) + 1 <= typemax(Ti) || throw(ArgumentError("stored count does not fit in Ti = $Ti"))
+    rowptr = MtlVector{Ti}(undef, A.m + 1)
+    kernel = Metal.@metal launch = false contract_idx_kernel!(rowptr, A.rowval, A.m, nnz(A))
+    launch_per_slice(kernel, A.m + 1, rowptr, A.rowval, A.m, nnz(A))
+    return rowptr
+end
+
+# Internal read-only CSR adapter borrows COO storage; public conversions copy.
+function as_csr(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
+    return MtlSparseMatrixCSR{Tv, Ti}(
+        unchecked, A.m, A.n, nnz(A), coo_rowptr(A), A.colval, A.nzval
+    )
+end
 
 as_csr(A::MtlSparseMatrixCSR) = A
 as_csr(A::AbstractMtlSparseMatrix) = MtlSparseMatrixCSR(A)
@@ -172,18 +184,14 @@ Base.Array(A::AbstractMtlSparseMatrix) = Array(SparseMatrixCSC(A))
 """
     MtlMatrix(A::AbstractMtlSparseMatrix{Tv}) -> MtlMatrix{Tv}
 
-The dense device matrix equal to `A`, computed on the device by scattering the
-coordinate triples into a zeroed matrix; values do not pass through the host.
-Linear indices are computed in `Int`, so `(j - 1) * m + i` cannot overflow the
-index type. Agrees with `Array(::SparseMatrixCSC)` moved to the device.
+The dense device matrix equal to `A`, computed asynchronously and deterministically
+by scattering its stored entries into a zeroed matrix. No format conversion or
+host transfer is performed. Address arithmetic uses `Int` independently of the
+sparse index type. Agrees with `Array(::SparseMatrixCSC)` moved to the device.
 """
 function Metal.MtlMatrix(A::AbstractMtlSparseMatrix{Tv}) where {Tv}
-    coo = as_coo(A)
     D = Metal.zeros(Tv, A.m, A.n)
-    if !isempty(coo.nzval)
-        linear = (Int.(coo.colval) .- 1) .* A.m .+ Int.(coo.rowval)
-        D[linear] = coo.nzval
-    end
+    nnz(A) > 0 && scatter!(D, A)
     return D
 end
 

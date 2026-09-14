@@ -79,7 +79,7 @@
 
         @testset "index type overflow" begin
             n = Int64(typemax(Int32)) + 1
-            A = spzeros(Float32, 1, n)
+            A = spzeros(Float32, n, 1)
             @test_throws ArgumentError MtlSparseMatrixCSC(A)
         end
 

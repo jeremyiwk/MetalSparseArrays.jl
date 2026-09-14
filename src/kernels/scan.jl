@@ -1,5 +1,5 @@
 # Device prefix sum for pointer arrays. `ptr_scan!` turns per-slice entry
-# counts into a compressed pointer array in three asynchronous kernel
+# counts into a compressed pointer array in up to three asynchronous kernel
 # launches, replacing the generic multi-kernel `accumulate!` whose fixed cost
 # dominated the merge (measured 121 vs 162 us at 4096 counts and 179 vs 457 us
 # at 262144, synchronized timings on Apple M-series). The classic two-level
@@ -12,6 +12,15 @@ const SCAN_BLOCK = 1024
 
 ## COV_EXCL_START
 
+@inline scan_shuffle_up(x, d) = simd_shuffle_up(x, d)
+
+# Metal shuffles integers through 32 bits; move both halves for 64-bit indices.
+@inline function scan_shuffle_up(x::T, d) where {T <: Union{Int64, UInt64}}
+    lo = simd_shuffle_up(x % UInt32, d)
+    hi = simd_shuffle_up((x >>> 32) % UInt32, d)
+    return reinterpret(T, UInt64(lo) | (UInt64(hi) << 32))
+end
+
 # Inclusive scan of `x` across the threadgroup: a shuffle-based scan within
 # each simdgroup, the simdgroup totals scanned by the first simdgroup through
 # threadgroup memory, then each lane offset by its simdgroup's prefix. `buf`
@@ -23,7 +32,7 @@ const SCAN_BLOCK = 1024
     nsg = Int(simdgroups_per_threadgroup())
     d = 1
     while d < width
-        y = simd_shuffle_up(x, d)
+        y = scan_shuffle_up(x, d)
         if lane > d
             x += y
         end
@@ -37,7 +46,7 @@ const SCAN_BLOCK = 1024
         s = lane <= nsg ? (@inbounds buf[lane]) : zero(x)
         d = 1
         while d < width
-            y = simd_shuffle_up(s, d)
+            y = scan_shuffle_up(s, d)
             if lane > d
                 s += y
             end
@@ -56,7 +65,7 @@ end
 
 # Each threadgroup g inclusively scans its block of counts into ptr[i + 1]
 # (block-local) and writes the block total to sums[g].
-function scan_blocks_kernel!(ptr, sums, counts, n)
+function scan_blocks_kernel!(ptr, sums, counts, n, init)
     t = Int(thread_position_in_threadgroup().x)
     T = Int(threads_per_threadgroup().x)
     g = Int(threadgroup_position_in_grid().x)
@@ -66,9 +75,11 @@ function scan_blocks_kernel!(ptr, sums, counts, n)
     x = i <= n ? (@inbounds counts[i]) : zero(eltype(ptr))
     x = threadgroup_scan(x, buf)
     if i <= n
-        @inbounds ptr[i + 1] = x
+        @inbounds ptr[i + 1] = sums === nothing ? init + x : x
     end
-    if t == min(T, n - base)
+    if sums === nothing
+        t == 1 && (@inbounds ptr[1] = init)
+    elseif t == min(T, n - base)
         @inbounds sums[g] = x
     end
     return nothing
@@ -122,7 +133,8 @@ end
 
 Fill the pointer array `ptr` (length `n + 1`) with `ptr[1] = init` and
 `ptr[i + 1] = init + sum(counts[1:i])` for the device vector `counts` of
-length `n >= 1`, entirely on the device in three asynchronous kernel launches;
+length `n`, entirely on the device in one launch for a single block and three
+launches otherwise (an empty input only fills the leading pointer);
 nothing touches the host and the caller synchronizes. The element types of
 `ptr` and `counts` must match, the sum must fit that type (unchecked here;
 callers bound it before launching), and the result is deterministic.
@@ -131,7 +143,19 @@ function ptr_scan!(
         ptr::MtlVector{Ti}, counts::MtlVector{Ti}, init::Ti
     ) where {Ti <: Integer}
     n = length(counts)
-    blocks = Metal.@metal launch = false scan_blocks_kernel!(ptr, counts, counts, n)
+    if n == 0
+        fill!(ptr, init)
+        return ptr
+    end
+    if n <= SCAN_BLOCK
+        single = Metal.@metal launch = false scan_blocks_kernel!(ptr, nothing, counts, n, init)
+        threads = min(SCAN_BLOCK, single.pipeline.maxTotalThreadsPerThreadgroup)
+        if n <= threads
+            single(ptr, nothing, counts, n, init; threads, groups = 1)
+            return ptr
+        end
+    end
+    blocks = Metal.@metal launch = false scan_blocks_kernel!(ptr, counts, counts, n, init)
     add = Metal.@metal launch = false scan_add_carries_kernel!(ptr, counts, n)
     threads = min(
         SCAN_BLOCK,
@@ -141,7 +165,7 @@ function ptr_scan!(
     nblocks = cld(n, threads)
     sums = MtlVector{Ti}(undef, nblocks)
     carries = MtlVector{Ti}(undef, nblocks)
-    blocks(ptr, sums, counts, n; threads, groups = nblocks)
+    blocks(ptr, sums, counts, n, init; threads, groups = nblocks)
     carrykernel = Metal.@metal launch = false scan_carries_kernel!(carries, sums, nblocks, init)
     carrythreads = min(SCAN_BLOCK, carrykernel.pipeline.maxTotalThreadsPerThreadgroup)
     carrykernel(carries, sums, nblocks, init; threads = carrythreads, groups = 1)

@@ -63,17 +63,8 @@ function MtlSparseMatrixCSC(
 end
 
 function MtlSparseMatrixCSC{Tv, Ti}(A::SparseMatrixCSC) where {Tv, Ti <: Integer}
-    m, n = size(A)
-    (m <= typemax(Ti) && n <= typemax(Ti) && nnz(A) + 1 <= typemax(Ti)) ||
-        throw(
-        ArgumentError(
-            "matrix with dimensions ($m, $n) and $(nnz(A)) stored entries does not fit in Ti = $Ti"
-        )
-    )
-    colptr = MtlVector{Ti}(convert(Vector{Ti}, A.colptr))
-    rowval = MtlVector{Ti}(convert(Vector{Ti}, A.rowval))
-    nzval = MtlVector{Tv}(convert(Vector{Tv}, A.nzval))
-    return MtlSparseMatrixCSC{Tv, Ti}(m, n, colptr, rowval, nzval)
+    ptr, idx, values = host_compressed(A, Tv, Ti, false)
+    return MtlSparseMatrixCSC{Tv, Ti}(unchecked, A.m, A.n, nnz(A), ptr, idx, values)
 end
 
 function MtlSparseMatrixCSC(A::SparseMatrixCSC{Tv}) where {Tv}

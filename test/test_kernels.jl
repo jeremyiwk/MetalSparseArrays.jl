@@ -8,7 +8,7 @@
 # unchecked construction inside the merge skips, since it compares the whole
 # pointer and index arrays against the stdlib's.
 
-@testset "merge broadcast kernel" begin
+@testset "merge broadcast kernel Ti=$Ti" for Ti in INDEX_TYPES
     if DEVICE_AVAILABLE
         # Operand pairs: every matrix of the suite's pattern corpus (random
         # densities, empty and degenerate shapes, a dense row and column,
@@ -36,8 +36,8 @@
                 Tv in ELEMENT_TYPES
 
             for (A, B) in merge_pairs(Tv), op in (+, -, *)
-                dC = broadcast(op, F{Tv, Int32}(A), F{Tv, Int32}(B))
-                @test dC isa F{Tv, Int32}
+                dC = broadcast(op, F{Tv, Ti}(A), F{Tv, Ti}(B))
+                @test dC isa F{Tv, Ti}
                 @test exact_equal(broadcast(op, A, B), SparseMatrixCSC(dC))
             end
         end
@@ -51,13 +51,13 @@
             for m in (1, 2, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025)
                 A = testsparse(Tv, Int, m, 4; density = 0.3, seed = 30)
                 B = testsparse(Tv, Int, m, 4; density = 0.3, seed = 31)
-                dC = broadcast(+, F{Tv, Int32}(A), F{Tv, Int32}(B))
+                dC = broadcast(+, F{Tv, Ti}(A), F{Tv, Ti}(B))
                 @test exact_equal(A .+ B, SparseMatrixCSC(dC))
             end
             for n in (255, 256, 257, 1023, 1024, 1025)
                 A = testsparse(Tv, Int, 4, n; density = 0.3, seed = 32)
                 B = testsparse(Tv, Int, 4, n; density = 0.3, seed = 33)
-                dC = broadcast(-, F{Tv, Int32}(A), F{Tv, Int32}(B))
+                dC = broadcast(-, F{Tv, Ti}(A), F{Tv, Ti}(B))
                 @test exact_equal(A .- B, SparseMatrixCSC(dC))
             end
         end
@@ -71,7 +71,7 @@
             Tv = Float32
             A = testsparse(Tv, Int, 25, 25; density = 0.2, seed = 45)
             B = testsparse(Tv, Int, 25, 25; density = 0.2, seed = 46)
-            dC = broadcast(+, F{Tv, Int32}(A), F{Tv, Int32}(B))
+            dC = broadcast(+, F{Tv, Ti}(A), F{Tv, Ti}(B))
             host = A .+ B
             @test nnz(dC) == nnz(host)
             @test length(nonzeros(dC)) == nnz(A) + nnz(B)
@@ -87,7 +87,7 @@
         @testset "cancellation drops entries as SparseArrays does $F" for F in SPARSE_TYPES
             Tv = Float32
             A = testsparse(Tv, Int, 30, 30; density = 0.3, seed = 40)
-            dA = F{Tv, Int32}(A)
+            dA = F{Tv, Ti}(A)
             # Exact cancellation leaves nothing stored, not stored zeros.
             @test nnz(dA .- dA) == 0
             @test exact_equal(A .- A, SparseMatrixCSC(dA .- dA))
@@ -95,7 +95,7 @@
             # position, structurally emptying the result.
             B = sparse(1:5, 1:5, fill(Tv(2), 5), 6, 6)
             C = sparse(1:4, 2:5, fill(Tv(3), 4), 6, 6)
-            dP = F{Tv, Int32}(B) .* F{Tv, Int32}(C)
+            dP = F{Tv, Ti}(B) .* F{Tv, Ti}(C)
             @test nnz(dP) == 0
             @test exact_equal(B .* C, SparseMatrixCSC(dP))
         end
@@ -107,7 +107,7 @@
             Tv = Float32
             A = testsparse(Tv, Int, 12, 9; density = 0.25, seed = 50)
             B = testsparse(Tv, Int, 12, 9; density = 0.25, seed = 51)
-            dA, dB = F{Tv, Int32}(A), F{Tv, Int32}(B)
+            dA, dB = F{Tv, Ti}(A), F{Tv, Ti}(B)
             two, three = Tv(2), Tv(3)
             for expr in (
                     (a, b) -> two .* a .+ b,
@@ -115,7 +115,7 @@
                     (a, b) -> (a .+ b) .* two,
                 )
                 dC = expr(dA, dB)
-                @test dC isa F{Tv, Int32}
+                @test dC isa F{Tv, Ti}
                 @test exact_equal(expr(A, B), SparseMatrixCSC(dC))
             end
         end
@@ -125,9 +125,9 @@
             A = testsparse(Tv, Int, 14, 11; density = 0.25, seed = 60)
             B = testsparse(Tv, Int, 14, 11; density = 0.25, seed = 61)
             for FA in SPARSE_TYPES, FB in SPARSE_TYPES
-                dC = broadcast(+, FA{Tv, Int32}(A), FB{Tv, Int32}(B))
+                dC = broadcast(+, FA{Tv, Ti}(A), FB{Tv, Ti}(B))
                 # The result takes the format of the first sparse operand.
-                @test dC isa FA{Tv, Int32}
+                @test dC isa FA{Tv, Ti}
                 @test exact_equal(A .+ B, SparseMatrixCSC(dC))
             end
         end
@@ -135,9 +135,9 @@
         @testset "mixed element types" begin
             A = testsparse(Float32, Int, 10, 10; density = 0.3, seed = 70)
             B = testsparse(Float16, Int, 10, 10; density = 0.3, seed = 71)
-            dC = MtlSparseMatrixCSR{Float32, Int32}(A) .+
-                MtlSparseMatrixCSR{Float16, Int32}(B)
-            @test dC isa MtlSparseMatrixCSR{Float32, Int32}
+            dC = MtlSparseMatrixCSR{Float32, Ti}(A) .+
+                MtlSparseMatrixCSR{Float16, Ti}(B)
+            @test dC isa MtlSparseMatrixCSR{Float32, Ti}
             @test exact_equal(A .+ B, SparseMatrixCSC(dC))
         end
 
@@ -157,7 +157,7 @@
                 ),
             ]
             for (A, B) in cases
-                dA, dB = F{Tv, Int32}(A), F{Tv, Int32}(B)
+                dA, dB = F{Tv, Ti}(A), F{Tv, Ti}(B)
                 first_result = SparseMatrixCSC(dA .+ dB)
                 for _ in 1:4
                     @test exact_equal(first_result, SparseMatrixCSC(dA .+ dB))
@@ -173,8 +173,8 @@
             Tv = Float32
             for m in (1023, 1024, 1025), density in (0.0, 0.02)
                 A = testsparse(Tv, Int, m, 7; density, seed = m)
-                dR = MtlSparseMatrixCSR{Tv, Int32}(A)
-                dC = MtlSparseMatrixCOO{Tv, Int32}(A)
+                dR = MtlSparseMatrixCSR{Tv, Ti}(A)
+                dC = MtlSparseMatrixCOO{Tv, Ti}(A)
                 @test exact_equal(A, SparseMatrixCSC(MtlSparseMatrixCOO(dR)))
                 @test exact_equal(A, SparseMatrixCSC(MtlSparseMatrixCSR(dC)))
             end
@@ -185,9 +185,9 @@
             A = testsparse(Tv, Int, 9, 7; density = 0.3, seed = 90)
             B = testsparse(Tv, Int, 9, 7; density = 0.3, seed = 91)
             C = testsparse(Tv, Int, 9, 7; density = 0.3, seed = 92)
-            dA = MtlSparseMatrixCSR{Tv, Int32}(A)
-            dB = MtlSparseMatrixCSR{Tv, Int32}(B)
-            dC = MtlSparseMatrixCSR{Tv, Int32}(C)
+            dA = MtlSparseMatrixCSR{Tv, Ti}(A)
+            dB = MtlSparseMatrixCSR{Tv, Ti}(B)
+            dC = MtlSparseMatrixCSR{Tv, Ti}(C)
 
             # Three sparse operands are outside the merge's domain: it must
             # decline, and the fallback must still give the stdlib answer.
@@ -196,7 +196,7 @@
 
             # A shape-expanding broadcast is likewise outside it.
             col = testsparse(Tv, Int, 9, 1; density = 0.5, seed = 93)
-            dcol = MtlSparseMatrixCSR{Tv, Int32}(col)
+            dcol = MtlSparseMatrixCSR{Tv, Ti}(col)
             @test MetalSparseArrays.try_merge_broadcast(*, (dA, dcol)) === nothing
             @test exact_equal(A .* col, SparseMatrixCSC(dA .* dcol))
 

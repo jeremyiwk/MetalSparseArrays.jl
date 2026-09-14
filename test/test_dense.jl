@@ -3,9 +3,9 @@
 
 @testset "dense conversions" begin
     if DEVICE_AVAILABLE
-        @testset "densify $F Tv=$Tv" for F in SPARSE_TYPES, Tv in ELEMENT_TYPES
+        @testset "densify $F Tv=$Tv Ti=$Ti" for F in SPARSE_TYPES, Tv in ELEMENT_TYPES, Ti in INDEX_TYPES
             for A in pattern_corpus(Tv)
-                dA = F{Tv, Int32}(A)
+                dA = F{Tv, Ti}(A)
                 Dh = Array(dA)
                 @test Dh isa Matrix{Tv}
                 @test isequal(Dh, Array(A))
