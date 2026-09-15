@@ -25,7 +25,7 @@ using SparseArrays: SparseArrays, AbstractSparseArray, AbstractSparseMatrix,
     SparseMatrixCSC, nnz, sparse
 
 export AbstractMtlSparseMatrix, MtlSparseMatrixCOO, MtlSparseMatrixCSC,
-    MtlSparseMatrixCSR
+    MtlSparseMatrixCSR, sparse
 
 include("common.jl")
 include("csr.jl")
@@ -34,8 +34,11 @@ include("coo.jl")
 include("conversions.jl")
 include("interface.jl")
 include("broadcast.jl")
+include("assembly.jl")
 include("kernels/scan.jl")
 include("kernels/merge_broadcast.jl")
 include("kernels/conversions.jl")
+include("kernels/ordering.jl")
+include("kernels/assembly.jl")
 
 end # module

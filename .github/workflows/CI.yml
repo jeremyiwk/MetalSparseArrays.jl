@@ -57,9 +57,7 @@ jobs:
         with:
           version: '1'
       - uses: julia-actions/cache@v2
-      # The piracies exception covers the one deliberate pirated method,
-      # Adapt.adapt_storage(::Type{MtlArray}, ::SparseMatrixCSC) — the CUSPARSE
-      # precedent, documented in its docstring in src/csc.jl.
+      # test/qa.jl documents and checks the deliberate CUSPARSE-style bridges.
       - name: Run Aqua.test_all and ExplicitImports
         run: |
           julia --color=yes -e '
@@ -67,13 +65,7 @@ jobs:
             Pkg.activate(temp = true)
             Pkg.develop(path = ".")
             Pkg.add(["Aqua", "ExplicitImports"])
-            using Aqua, ExplicitImports, MetalSparseArrays, SparseArrays
-            Aqua.test_all(
-                MetalSparseArrays;
-                piracies = (; treat_as_own = [SparseArrays.SparseMatrixCSC]),
-            )
-            check_no_implicit_imports(MetalSparseArrays)
-            check_no_stale_explicit_imports(MetalSparseArrays)'
+            include("test/qa.jl")'
 
   format:
     name: Runic formatting

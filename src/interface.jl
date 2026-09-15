@@ -91,8 +91,8 @@ SparseArrays.rowvals(A::MtlSparseMatrixCSC) = A.rowval
 
 The stored entries of `A` as three `MtlVector`s of row indices, column indices,
 and values, in the column-major order `SparseArrays.findnz` returns, freshly
-allocated. CSC inputs are processed asynchronously on the device; other formats
-first convert to CSC, using the conversion behavior documented for that format.
+allocated. Computed asynchronously on device; CSR/COO inputs reorder their
+entries, subject to the entry-count limit documented for conversion to CSC.
 """
 function SparseArrays.findnz(A::AbstractMtlSparseMatrix{Tv, Ti}) where {Tv, Ti}
     csc = as_csc(A)
@@ -101,6 +101,11 @@ function SparseArrays.findnz(A::AbstractMtlSparseMatrix{Tv, Ti}) where {Tv, Ti}
         device_copy(view(csc.rowval, 1:nnz(csc))), colval,
         device_copy(view(csc.nzval, 1:nnz(csc))),
     )
+end
+
+function SparseArrays.findnz(A::Union{MtlSparseMatrixCSR, MtlSparseMatrixCOO})
+    cols, rows, values = column_entries(A)
+    return rows, cols, values
 end
 
 as_csc(A::MtlSparseMatrixCSC) = A

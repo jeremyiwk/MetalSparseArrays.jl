@@ -7,6 +7,15 @@ and this package adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Assemble unsorted device coordinates with `sparse(I, J, V, [m, n, combine];
+  fmt=:csc)`, including CSR/COO output, deterministic duplicate accumulation,
+  stored-zero preservation, and promoted input index types.
+
+- Reorder CSC/CSR/COO on device with stable numeric sorting, preserving stored
+  values exactly. CSR/COO findnz and mixed-format broadcasts use this path.
+- Require Metal.jl 1.10 for MPSGraph sorting. Reorders support Int32/Int64
+  coordinates and at most `typemax(Int32)` entries, the backend argSort limit.
+
 - Restore Int64 pointer scans and exercise both supported index types.
 - Fix in-place broadcast from device views and wrappers and host CSC conversion
   with oversized storage tails.

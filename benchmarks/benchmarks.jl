@@ -37,6 +37,40 @@ struct Benchmark
     evals::Int
 end
 
+# CPU CSR storage is represented by CSC of the transpose, so transpose
+# materialization measures the same index/value reorder without a CSR dependency.
+function add_reorder_cases!(A, pattern)
+    Tv, Ti = eltype(A), eltype(A.colptr)
+    m, n = size(A)
+    At = sparse(transpose(A))
+    csc = MtlSparseMatrixCSC{Tv, Ti}(A)
+    csr = MtlSparseMatrixCSR{Tv, Ti}(A)
+    coo = MtlSparseMatrixCOO{Tv, Ti}(A)
+    for (name, source, F, host) in (
+            ("CSC_to_CSR", csc, MtlSparseMatrixCSR, A),
+            ("CSR_to_CSC", csr, MtlSparseMatrixCSC, At),
+        )
+        benchmark!(() -> sparse(transpose(host)), "format_reorder", "SparseArrays", name, Tv, Ti, m, n, nnz(A), pattern)
+        benchmark!(() -> F(source), "format_reorder", "device sparse", name, Tv, Ti, m, n, nnz(A), pattern; device = true)
+    end
+    benchmark!(() -> MtlSparseMatrixCSC(coo), "format_reorder", "device sparse", "COO_to_CSC", Tv, Ti, m, n, nnz(A), pattern; device = true)
+    benchmark!(() -> MtlSparseMatrixCOO(csc), "format_reorder", "device sparse", "CSC_to_COO", Tv, Ti, m, n, nnz(A), pattern; device = true)
+    benchmark!(() -> A .+ A, "mixed_sparse_add", "SparseArrays", "CSC", Tv, Ti, m, n, nnz(A), pattern)
+    benchmark!(() -> csr .+ csc, "mixed_sparse_add", "device sparse", "CSR_CSC", Tv, Ti, m, n, nnz(A), pattern; device = true)
+    benchmark!(() -> csr .+ csr, "mixed_sparse_add", "device sparse", "CSR_CSR", Tv, Ti, m, n, nnz(A), pattern; device = true)
+    return nothing
+end
+
+function add_assembly_cases!(I, J, V, m, n, pattern)
+    Tv, Ti = eltype(V), eltype(I)
+    di, dj, dv = MtlArray(I), MtlArray(J), MtlArray(V)
+    benchmark!(() -> sparse(I, J, V, m, n), "coo_assembly", "SparseArrays", "CSC", Tv, Ti, m, n, length(V), pattern)
+    for fmt in (:csc, :csr, :coo)
+        benchmark!(() -> sparse(di, dj, dv, m, n; fmt), "coo_assembly", "device sparse", fmt, Tv, Ti, m, n, length(V), pattern; device = true)
+    end
+    return nothing
+end
+
 const SUITE = Benchmark[]
 
 benchmark!(thunk::Function, group::String, key...; device::Bool = false, evals::Int = 1) =
@@ -146,4 +180,31 @@ for Tv in (Float32, ComplexF32), Ti in (Int32, Int64), N in (256, 4096, 65536, 2
         dA = F{Tv, Ti}(A)
         benchmark!(() -> (dA .= zero(Tv)), "zero_fill_batch", "device sparse", nameof(F), Tv, Ti, N, nnz(A); device = true, evals = 100)
     end
+end
+
+for Tv in (Float32, ComplexF32), Ti in (Int32, Int64)
+    for N in (4096, 65536, 262144)
+        A = spdiagm(-1 => fill(-one(Tv), N - 1), 0 => fill(Tv(2), N), 1 => fill(-one(Tv), N - 1))
+        add_reorder_cases!(SparseMatrixCSC{Tv, Ti}(A), "tridiagonal")
+    end
+    A, _ = dense_row_pair(Tv, 65536)
+    for (name, B) in (("dense_row", A), ("dense_column", sparse(transpose(A))))
+        add_reorder_cases!(SparseMatrixCSC{Tv, Ti}(B), name)
+    end
+    A = sparse(collect(1:65536), mod1.(collect(1:65536), 17), fill(one(Tv), 65536), 65536, 17)
+    add_reorder_cases!(SparseMatrixCSC{Tv, Ti}(A), "rectangular")
+end
+
+for Tv in (Float32, ComplexF32), Ti in (Int32, Int64)
+    for N in (256, 4096, 65536, 262144)
+        I = reverse(repeat(Ti.(1:N); inner = 3))
+        J = reverse(Ti.(mod1.(repeat(collect(1:N); inner = 3) + repeat([-1, 0, 1], N), N)))
+        V = fill(one(Tv), length(I))
+        add_assembly_cases!(I, J, V, N, N, "reverse_bands")
+    end
+    K, N = 262144, 16384
+    I = Ti.(mod1.(collect(1:K), N))
+    J = Ti.(mod1.(7 .* collect(1:K), N))
+    add_assembly_cases!(I, J, fill(one(Tv), K), N, N, "duplicates_16")
+    add_assembly_cases!(ones(Ti, K), ones(Ti, K), fill(one(Tv), K), 1, 1, "all_duplicates")
 end

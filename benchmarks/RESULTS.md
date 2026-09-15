@@ -63,7 +63,58 @@ but allocating and initializing a dense output remains substantial. Batched
 zero-fill times are normalized per operation and must not be read as standalone
 latency or as a prediction for a solver loop with dependencies.
 
-The next performance work is device format reordering, deterministic assembly,
-long-slice measurements, and allocation-free sparse matrix-vector application
-measured in an actual iterative solve. Small isolated calls remain limited by
+These measurements precede device reordering and coordinate assembly. Their
+follow-up results appear below. Small isolated calls remain limited by
 submission/completion overhead; faster kernels alone cannot close that gap.
+
+## Device ordering and assembly follow-up
+
+Same hardware, package versions, and synchronized minimum-of-100 methodology.
+Reproduce with:
+
+```sh
+julia benchmarks/runbenchmarks.jl findnz format_reorder mixed_sparse_add coo_assembly
+```
+
+All device format conversions now preserve canonical order without copying
+coordinates or values through the host. Stable numeric keys include an input
+rank, so correctness does not depend on backend tie ordering. Reorders involving
+CSC require Metal.jl 1.10 and support at most `typemax(Int32)` entries; Int64
+coordinates use multiple sorting passes when needed to avoid key overflow.
+
+For Float32/Int32 tridiagonal inputs, current `findnz` minima are:
+
+| Stored entries | CPU CSC, us | Device CSR, us | Device CSC, us | Device COO, us |
+|---:|---:|---:|---:|---:|
+| 12,286 | 6.5 | 283 | 148 | 285 |
+| 786,430 | 434 | 2,294 | 397 | 2,243 |
+
+At 786k entries, CSR/COO improve from 4,298/7,236 us to 2,294/2,243 us,
+approximately 1.9/3.2 times faster. The global sort still costs more than CPU
+reordering. CSC-to-CSR conversion takes 2,385 us versus 1,156 us for the CPU
+transpose-storage equivalent. Mixed CSR/CSC addition takes 2,916 us versus
+661 us with both inputs already CSR; resident conversion is still worth avoiding
+inside repeated computations.
+
+`sparse(I, J, V, m, n; fmt)` now assembles device coordinates directly into the
+requested format. Validation and the stored-count readback are included below.
+CPU output is CSC; input value and index widths match. Times are milliseconds.
+
+| Input pattern | Input triples | CPU | Device CSC | Device CSR | Device COO |
+|---|---:|---:|---:|---:|---:|
+| Reverse-ordered bands | 786,432 | 3.364 | 3.587 | 3.564 | 3.466 |
+| 16 inputs per coordinate | 262,144 | 0.593 | 1.714 | 1.724 | 1.669 |
+| All inputs at one coordinate | 262,144 | 0.625 | 15.796 | 15.783 | 15.780 |
+
+The largest reverse-band case is within about 7% of CPU. Duplicate-heavy cases
+remain slower. High average duplicate multiplicity uses cooperative threadgroup
+loads, but one thread folds each group in original input order, preserving
+SparseArrays' rounding and custom-combiner semantics. This reduced the
+single-coordinate Float32 case from roughly 38 ms to 16 ms. A SIMD-shuffle
+variant was slower and is not included in the implementation.
+
+An isolated long duplicate group among many short groups can still select the
+serial path: dispatch currently uses average multiplicity. More adaptive group
+scheduling and cheaper ordering remain performance work, alongside structured
+device constructors and sparse matrix-vector application. CPU parity has not
+been established across arbitrary sparsity distributions.

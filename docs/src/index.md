@@ -20,6 +20,17 @@ Pkg.develop(url = "https://github.com/jeremyiwk/MetalSparseArrays.jl")
 using MetalSparseArrays
 ```
 
+Device coordinate assembly accepts unsorted entries and combines duplicates:
+
+```julia
+using Metal, SparseArrays
+I = MtlVector(Int32[2, 1, 2])
+J = MtlVector(Int32[1, 2, 1])
+V = MtlVector(Float32[3, 4, -3])
+A = sparse(I, J, V, 2, 2; fmt=:csr)
+# The cancelled value at (2, 1) remains a stored zero.
+```
+
 An Apple Silicon GPU is required for device operations. The test suite runs
 anywhere for local development — device test sets are skipped without a GPU —
 but merges are gated on CI runs where a Metal device is required to be present
@@ -35,6 +46,8 @@ These are properties of the hardware and shape every design decision:
   time.
 - **32-bit indices.** The default index type is `Int32`, matching `CUSPARSE`;
   conversions from host matrices are checked against `typemax(Int32)`.
+  Int64 coordinates are also supported. Device format reordering uses Metal.jl
+  1.10's MPSGraph sorting and accepts at most `typemax(Int32)` stored entries.
 - **No scalar indexing** of device arrays in library code.
 - **Asynchrony.** Kernel launches return before the work completes; results are
   synchronized before host reads.

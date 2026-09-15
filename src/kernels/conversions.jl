@@ -52,6 +52,19 @@ function expand_ptr(ptr::MtlVector{Ti}, stored::Integer) where {Ti}
     return idx
 end
 
+function contract_idx(idx::MtlVector{Ti}, major::Integer) where {Ti}
+    stored = length(idx)
+    stored < typemax(Ti) || throw(ArgumentError("stored count does not fit in Ti = $Ti"))
+    ptr = MtlVector{Ti}(undef, major + 1)
+    if stored == 0
+        fill!(ptr, one(Ti))
+    else
+        kernel = Metal.@metal launch = false contract_idx_kernel!(ptr, idx, major, stored)
+        launch_per_slice(kernel, major + 1, ptr, idx, major, stored)
+    end
+    return ptr
+end
+
 ## COV_EXCL_START
 
 function scatter_compressed_kernel!(D, ptr, idx, val, major, column_major)

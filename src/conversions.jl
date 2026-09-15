@@ -12,11 +12,9 @@ function host_compressed(A::SparseMatrixCSC, ::Type{Tv}, ::Type{Ti}, transposed)
 end
 
 # Conversions between the device formats. COO and CSR share row-major entry
-# order, so those two conversions run entirely on the device (the kernels live
-# in src/kernels/conversions.jl); every conversion involving CSC reorders
-# entries and currently goes through the host SparseMatrixCSC fallback (see
-# each docstring). Conversions always copy: mutating the source never changes
-# the result, matching CUSPARSE.
+# order; conversions involving CSC stably sort by the new major index on the
+# device. Conversions always copy: mutating the source never changes the result,
+# matching CUSPARSE.
 
 """
     MtlSparseMatrixCSR(A::MtlSparseMatrixCOO)
@@ -37,13 +35,19 @@ end
 """
     MtlSparseMatrixCSR(A::MtlSparseMatrixCSC)
 
-Convert to CSR. This reorders every entry from column-major to row-major, and
-is currently computed through the host `SparseMatrixCSC` fallback (a full
-transfer each way); a device reorder kernel is planned with the Phase 3 kernel
-infrastructure. The `(i, j, v)` triple set is preserved exactly.
+Convert to CSR asynchronously on device by stably sorting entries into row-major
+order. The `(i, j, v)` triple set, including stored zeros, is preserved exactly
+and deterministically; output storage does not alias the input. Reordering uses
+MPSGraph and supports at most `typemax(Int32)` stored entries, with either index
+type. No coordinate or value arrays are transferred to the host.
 """
 function MtlSparseMatrixCSR(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
-    return MtlSparseMatrixCSR{Tv, Ti}(SparseMatrixCSC(A))
+    rows, cols, values = reorder_entries(
+        view(A.rowval, 1:nnz(A)), expand_ptr(A.colptr, nnz(A)), A.nzval, A.m
+    )
+    return MtlSparseMatrixCSR{Tv, Ti}(
+        unchecked, A.m, A.n, nnz(A), contract_idx(rows, A.m), cols, values
+    )
 end
 
 """
@@ -67,18 +71,23 @@ end
     MtlSparseMatrixCSC(A::MtlSparseMatrixCSR)
     MtlSparseMatrixCSC(A::MtlSparseMatrixCOO)
 
-Convert to CSC. Both reorder every entry from row-major to column-major, and
-are currently computed through the host `SparseMatrixCSC` fallback (a full
-transfer each way); a device reorder kernel is planned with the Phase 3 kernel
-infrastructure. The `(i, j, v)` triple set is preserved exactly.
+Convert to CSC asynchronously on device by stably sorting entries into
+column-major order. The `(i, j, v)` triple set, including stored zeros, is
+preserved exactly and deterministically; output storage does not alias the input.
+Reordering uses MPSGraph and supports at most `typemax(Int32)` stored entries,
+with either index type. No coordinate or value arrays are transferred to the host.
 """
-function MtlSparseMatrixCSC(A::MtlSparseMatrixCSR{Tv, Ti}) where {Tv, Ti}
-    return MtlSparseMatrixCSC{Tv, Ti}(SparseMatrixCSC(A))
+function MtlSparseMatrixCSC(A::Union{MtlSparseMatrixCSR{Tv, Ti}, MtlSparseMatrixCOO{Tv, Ti}}) where {Tv, Ti}
+    cols, rows, values = column_entries(A)
+    return MtlSparseMatrixCSC{Tv, Ti}(
+        unchecked, A.m, A.n, nnz(A), contract_idx(cols, A.n), rows, values
+    )
 end
 
-function MtlSparseMatrixCSC(A::MtlSparseMatrixCOO{Tv, Ti}) where {Tv, Ti}
-    return MtlSparseMatrixCSC{Tv, Ti}(SparseMatrixCSC(A))
-end
+column_entries(A::MtlSparseMatrixCSR) = reorder_entries(
+    view(A.colval, 1:nnz(A)), expand_ptr(A.rowptr, nnz(A)), A.nzval, A.n
+)
+column_entries(A::MtlSparseMatrixCOO) = reorder_entries(A.colval, A.rowval, A.nzval, A.n)
 
 """
     SparseMatrixCSC(A::MtlSparseMatrixCSC{Tv, Ti}) -> SparseMatrixCSC{Tv, Ti}
@@ -104,8 +113,8 @@ preserving the storage format, exactly as `CUDA.CUSPARSE` adapts to `CuArray`.
 
 This method is deliberate type piracy — both `MtlArray` and `SparseMatrixCSC`
 are owned by other packages — committed knowingly on the `CUSPARSE` precedent
-and excepted in the Aqua piracy check; it is the one pirated method this package
-defines.
+and excepted in the Aqua piracy check. The compatibility bridges are checked
+by `test/qa.jl`.
 """
 Adapt.adapt_storage(::Type{MtlArray}, A::SparseMatrixCSC) = MtlSparseMatrixCSC(A)
 
@@ -131,14 +140,17 @@ end
 """
     MtlSparseMatrixCOO(A::MtlSparseMatrixCSC)
 
-Convert to COO. This reorders every entry from column-major to the row-major
-order COO stores, and is currently computed through the host `SparseMatrixCSC`
-fallback (a full transfer each way); a device reorder kernel is planned with
-the Phase 3 kernel infrastructure. The `(i, j, v)` triple set is preserved
-exactly.
+Convert to COO asynchronously on device by stably sorting entries into row-major
+order. The `(i, j, v)` triple set, including stored zeros, is preserved exactly
+and deterministically; output storage does not alias the input. Reordering uses
+MPSGraph and supports at most `typemax(Int32)` stored entries, with either index
+type. No coordinate or value arrays are transferred to the host.
 """
 function MtlSparseMatrixCOO(A::MtlSparseMatrixCSC{Tv, Ti}) where {Tv, Ti}
-    return MtlSparseMatrixCOO{Tv, Ti}(SparseMatrixCSC(A))
+    rows, cols, values = reorder_entries(
+        view(A.rowval, 1:nnz(A)), expand_ptr(A.colptr, nnz(A)), A.nzval, A.m
+    )
+    return MtlSparseMatrixCOO{Tv, Ti}(unchecked, A.m, A.n, rows, cols, values)
 end
 
 """
@@ -155,11 +167,7 @@ end
 # `as_csr` gives the merge a row-major representation; same-format is identity.
 # `as_csc` sits with its caller in `interface.jl`.
 function coo_rowptr(A::MtlSparseMatrixCOO{<:Any, Ti}) where {Ti}
-    nnz(A) + 1 <= typemax(Ti) || throw(ArgumentError("stored count does not fit in Ti = $Ti"))
-    rowptr = MtlVector{Ti}(undef, A.m + 1)
-    kernel = Metal.@metal launch = false contract_idx_kernel!(rowptr, A.rowval, A.m, nnz(A))
-    launch_per_slice(kernel, A.m + 1, rowptr, A.rowval, A.m, nnz(A))
-    return rowptr
+    return contract_idx(A.rowval, A.m)
 end
 
 # Internal read-only CSR adapter borrows COO storage; public conversions copy.

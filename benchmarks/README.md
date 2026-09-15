@@ -25,6 +25,16 @@ The last column is operations per sample; times are normalized per operation.
 `zero_fill_batch` executes 100 operations per synchronization to measure batching,
 while the other groups report standalone latency.
 
+`format_reorder` and `mixed_sparse_add` cover tridiagonal, dense-row,
+dense-column and rectangular patterns. CPU compressed reordering uses CSC of
+the transpose as CSR storage; this measures the corresponding index/value
+permutation without adding a CPU CSR package.
+
+`coo_assembly` compares CPU CSC assembly with each device output format for
+reverse-ordered bands, repeated coordinates and a single coordinate receiving
+every input value. Its count column is the number of input triples, before
+duplicate accumulation; timings include validation and the output-count readback.
+
 CI runs the suite informationally on pull requests and on a weekly schedule
 (`.github/workflows/Benchmarks.yml`); timing results never block a merge, but
 regressions are reviewed at PR time and the roadmap performance goals are

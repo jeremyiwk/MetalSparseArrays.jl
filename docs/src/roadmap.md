@@ -60,7 +60,7 @@ reproducibility. Device test sets are skipped on machines without a GPU for loca
 convenience only: CI requires the device (`CI_EXPECT_DEVICE`), so nothing merges
 unverified on Metal. Element types are discovered by probing the device.
 
-## Phase 1 — Storage formats *(formats shipped; device reordering, device sparsification and full gate validation remain; BSR waits for a consumer)*
+## Phase 1 — Storage formats *(formats and device reordering shipped; device sparsification and full gate validation remain; BSR waits for a consumer)*
 
 **Deliverables**
 
@@ -96,7 +96,7 @@ unverified on Metal. Element types are discovered by probing the device.
 - `Base.show` displays every format legibly at the REPL without scalar indexing
   (summary line plus a bounded number of entries fetched in one transfer).
 
-## Phase 2 — Array interface *(in progress: similar/copy/collect, rowvals/findnz, scalar indexing policy, broadcasting incl. the device sparse-sparse pattern merge and in-place assignment shipped)*
+## Phase 2 — Array interface *(in progress: similar/copy/collect, rowvals/findnz, scalar indexing policy, broadcasting and deterministic COO assembly shipped; structured device constructors remain)*
 
 **Deliverables**
 
@@ -116,8 +116,9 @@ unverified on Metal. Element types are discovered by probing the device.
   pattern-merge kernel in `src/kernels/merge_broadcast.jl`, the first
   hand-written kernel (`Metal.MPS` was surveyed and wraps no sparse
   primitive). In-place `A .= ...` follows `SparseArrays` semantics.
-- COO assembly: `sortperm` on `(j, i)`, duplicate accumulation with `+`,
-  matching `sparse(I, J, V, m, n, +)`.
+- COO assembly: stable coordinate ordering through numeric device `sortperm`,
+  duplicate accumulation in original input order, matching
+  `sparse(I, J, V, m, n, +)`. Output format selected with `fmt=:csc/:csr/:coo`.
 - Constructor parity with `SparseArrays`: the constructors `SparseArrays`
   accepts work with device storage — `sparse`/format constructors from
   structured matrices over device vectors (`Diagonal(::MtlVector)`,
